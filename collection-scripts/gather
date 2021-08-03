@@ -1,0 +1,18 @@
+#!/bin/bash
+
+BASE_COLLECTION_PATH="/must-gather"
+mkdir -p ${BASE_COLLECTION_PATH}
+
+ANSIBLECRD="ansiblejobs.tower.ansible.com automationcontrollerbackups.automationcontroller.ansible.com automationcontrollerrestores.automationcontroller.ansible.com automationcontrollers.automationcontroller.ansible.com automationhubbackups.automationhub.ansible.com automationhubrestores.automationhub.ansible.com automationhubs.automationhub.ansible.com jobtemplates.tower.ansible.com"
+
+for i in $ANSIBLECRD; do
+    oc adm inspect $i --all-namespaces --dest-dir=must-gather
+   ANSIBLENS+=`oc get $i --all-namespaces --no-headers=true | awk '{print "\n" $1}'`
+done
+
+NS=`echo ${ANSIBLENS[@]}  | tr ' ' '\n'  | sort | uniq`
+
+for a in $NS; do
+  oc adm inspect ns/"$a" --all-namespaces  --dest-dir=must-gather
+  oc get pods -n $a >> ${BASE_COLLECTION_PATH}/gather-aap.log
+done
