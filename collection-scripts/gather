@@ -16,3 +16,7 @@ for a in $NS; do
   oc adm inspect ns/"$a" --all-namespaces  --dest-dir=must-gather
   oc get pods -n $a >> ${BASE_COLLECTION_PATH}/gather-aap.log
 done
+
+echo "WARNING: Collecting kernel messages on ALL nodes in your cluster. This could take a large amount of time."
+oc adm node-logs --role=master -l kubernetes.io/os=linux --grep kernel > "${BASE_COLLECTION_PATH}/master_dmesg.log"
+oc adm node-logs --role=worker -l kubernetes.io/os=linux --grep kernel > "${BASE_COLLECTION_PATH}/worker_dmesg.log"
