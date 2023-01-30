@@ -13,8 +13,15 @@ done
 NS=`echo ${ANSIBLENS[@]}  | tr ' ' '\n'  | sort | uniq`
 
 for a in $NS; do
-  oc adm inspect ns/"$a" --all-namespaces  --dest-dir=must-gather
+  oc adm inspect ns/"$a"  --dest-dir=must-gather
+  oc adm inspect -n $a csv -n $b --dest-dir=must-gather
   oc get pods -n $a >> ${BASE_COLLECTION_PATH}/gather-aap.log
+done
+
+for b in $(oc get subs -A | grep ansible-automation-platform-operator | awk '{print $1}'); do
+  oc adm inspect ns/"$b" --dest-dir=must-gather
+  oc get pods -n $b >> ${BASE_COLLECTION_PATH}/gather-aap.log
+  oc adm inspect -n $b subs -n $b --dest-dir=must-gather
 done
 
 echo "WARNING: Collecting kernel messages on ALL nodes in your cluster. This could take a large amount of time."
