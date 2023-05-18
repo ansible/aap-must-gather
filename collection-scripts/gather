@@ -3,7 +3,24 @@
 BASE_COLLECTION_PATH="/must-gather"
 mkdir -p ${BASE_COLLECTION_PATH}
 
-ANSIBLECRD="ansiblejobs.tower.ansible.com automationcontrollerbackups.automationcontroller.ansible.com automationcontrollerrestores.automationcontroller.ansible.com automationcontrollers.automationcontroller.ansible.com automationhubbackups.automationhub.ansible.com automationhubrestores.automationhub.ansible.com automationhubs.automationhub.ansible.com jobtemplates.tower.ansible.com"
+ANSIBLECRD="automationcontrollerbackups.automationcontroller.ansible.com \
+  automationcontrollerrestores.automationcontroller.ansible.com \
+  automationcontrollers.automationcontroller.ansible.com \
+  automationhubbackups.automationhub.ansible.com \
+  automationhubrestores.automationhub.ansible.com \
+  automationhubs.automationhub.ansible.com \
+  edas.eda.ansible.com \
+  edabackups.eda.ansible.com \
+  edarestores.eda.ansible.com \
+  ansiblecredentials.tower.ansible.com \
+  ansibleinstancegroups.tower.ansible.com \
+  ansibleinventories.tower.ansible.com \
+  ansibleprojects.tower.ansible.com \
+  ansibleschedules.tower.ansible.com \
+  ansiblejobs.tower.ansible.com \
+  ansibleworkflows.tower.ansible.com \
+  jobtemplates.tower.ansible.com \
+  workflowtemplates.tower.ansible.com"
 
 for i in $ANSIBLECRD; do
    oc adm inspect $i --all-namespaces --dest-dir=must-gather 
