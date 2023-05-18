@@ -7,10 +7,10 @@ ANSIBLECRD="ansiblejobs.tower.ansible.com automationcontrollerbackups.automation
 
 for i in $ANSIBLECRD; do
    oc adm inspect $i --all-namespaces --dest-dir=must-gather 
-   ANSIBLENS+=`oc get $i --all-namespaces --no-headers=true 2> /dev/null | awk '{print "\n" $1}'`
+   ANSIBLENS+=`oc get $i --all-namespaces --no-headers=true -o custom-columns=NAMESPACE:.metadata.namespace; echo " "`
 done
 
-NS=`echo ${ANSIBLENS[@]}  | tr ' ' '\n'  | sort | uniq`
+NS=`echo ${ANSIBLENS[@]} | xargs -n1 | sort -u`
 
 for a in $NS; do
   oc adm inspect ns/"$a"  --dest-dir=must-gather
@@ -18,7 +18,7 @@ for a in $NS; do
   oc get pods -n $a >> ${BASE_COLLECTION_PATH}/gather-aap.log
 done
 
-for b in $(oc get subs -A | grep ansible-automation-platform-operator | awk '{print $1}'); do
+for b in $(oc get -A subs --field-selector='metadata.name=ansible-automation-platform-operator' -o custom-columns=NAMESPACE:.metadata.namespace); do
   oc adm inspect ns/"$b" --dest-dir=must-gather
   oc get pods -n $b >> ${BASE_COLLECTION_PATH}/gather-aap.log
   oc adm inspect -n $b subs -n $b --dest-dir=must-gather
