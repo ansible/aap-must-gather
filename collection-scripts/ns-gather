@@ -22,7 +22,7 @@ ANSIBLECRD="automationcontrollerbackups.automationcontroller.ansible.com \
   jobtemplates.tower.ansible.com \
   workflowtemplates.tower.ansible.com"
 
-oc adm inspect customresourcedefinition.apiextensions.k8s.io $ANSIBLECRD
+oc adm inspect customresourcedefinition.apiextensions.k8s.io $ANSIBLECRD --dest-dir=must-gather
 
 for i in $ANSIBLECRD; do
   oc adm inspect $i -n $1 --dest-dir=must-gather
@@ -30,4 +30,3 @@ done
 
 oc adm inspect ns/"$1"  --dest-dir=must-gather
 oc get pods -n $1 >> ${BASE_COLLECTION_PATH}/gather-aap.log
-
