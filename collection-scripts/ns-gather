@@ -20,7 +20,8 @@ ANSIBLECRD="automationcontrollerbackups.automationcontroller.ansible.com \
   ansiblejobs.tower.ansible.com \
   ansibleworkflows.tower.ansible.com \
   jobtemplates.tower.ansible.com \
-  workflowtemplates.tower.ansible.com"
+  workflowtemplates.tower.ansible.com \
+  ansibleaiconnects.aiconnect.ansible.com"
 
 oc adm inspect customresourcedefinition.apiextensions.k8s.io $ANSIBLECRD --dest-dir=must-gather
 
