@@ -22,7 +22,8 @@ ANSIBLECRD="automationcontrollerbackups.automationcontroller.ansible.com \
   jobtemplates.tower.ansible.com \
   workflowtemplates.tower.ansible.com"
 
-oc adm inspect customresourcedefinition.apiextensions.k8s.io $ANSIBLECRD
+oc adm inspect customresourcedefinition.apiextensions.k8s.io $ANSIBLECRD --dest-dir=must-gather
+oc adm inspect customresourcedefinition.apiextensions.k8s.io subscriptions.operators.coreos.com clusterserviceversions.operators.coreos.com --dest-dir=must-gather
 
 for i in $ANSIBLECRD; do
   oc adm inspect $i -n $1 --dest-dir=must-gather
