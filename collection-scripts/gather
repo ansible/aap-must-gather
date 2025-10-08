@@ -35,13 +35,13 @@ ANSIBLECRD="automationcontrollerbackups.automationcontroller.ansible.com \
 
 # Collect cluster version information
 echo "Collecting cluster version information..."
-oc adm inspect clusterversion --dest-dir=must-gather
+oc adm inspect clusterversion --dest-dir=${BASE_COLLECTION_PATH}/must-gather
 
-oc adm inspect customresourcedefinition.apiextensions.k8s.io $ANSIBLECRD --dest-dir=must-gather
-oc adm inspect customresourcedefinition.apiextensions.k8s.io subscriptions.operators.coreos.com clusterserviceversions.operators.coreos.com --dest-dir=must-gather
+oc adm inspect customresourcedefinition.apiextensions.k8s.io $ANSIBLECRD --dest-dir=${BASE_COLLECTION_PATH}/must-gather
+oc adm inspect customresourcedefinition.apiextensions.k8s.io subscriptions.operators.coreos.com clusterserviceversions.operators.coreos.com --dest-dir=${BASE_COLLECTION_PATH}/must-gather
 
 for i in $ANSIBLECRD; do
-   oc adm inspect $i --all-namespaces --dest-dir=must-gather 
+   oc adm inspect $i --all-namespaces --dest-dir=${BASE_COLLECTION_PATH}/must-gather
    ANSIBLENS+=`oc get $i --all-namespaces --no-headers=true -o custom-columns=NAMESPACE:.metadata.namespace; echo " "`
 done
 
@@ -312,8 +312,14 @@ EOF
     local icon="$3"
     local api_group="$4"
 
-    find ${BASE_COLLECTION_PATH}/namespaces -name "${cr_type}" -type d 2>/dev/null | while read cr_dir; do
-      find "$cr_dir" -name "*.yaml" -type f | sort | while read cr_file; do
+    # Check both possible locations for namespaces directory
+    local NAMESPACES_PATH="${BASE_COLLECTION_PATH}/namespaces"
+    if [ ! -d "$NAMESPACES_PATH" ]; then
+      NAMESPACES_PATH="${BASE_COLLECTION_PATH}/must-gather/namespaces"
+    fi
+
+    for cr_dir in $(find ${NAMESPACES_PATH} -name "${cr_type}" -type d 2>/dev/null); do
+      for cr_file in $(find "$cr_dir" -name "*.yaml" -type f | sort); do
         local name=$(grep "^  name:" "$cr_file" | head -1 | awk '{print $2}')
         local namespace=$(echo "$cr_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
         local version="N/A"
@@ -648,48 +654,58 @@ EOF
   TEMP_CR_FILE=$(mktemp)
 
   # Find all AAP custom resource instances and organize by namespace
+  # Check both possible locations for namespaces directory
+  NAMESPACES_PATH="${BASE_COLLECTION_PATH}/namespaces"
+  if [ ! -d "$NAMESPACES_PATH" ]; then
+    NAMESPACES_PATH="${BASE_COLLECTION_PATH}/must-gather/namespaces"
+  fi
   # AAP instances
-  find ${BASE_COLLECTION_PATH}/namespaces -name "ansibleautomationplatforms" -type d 2>/dev/null | while read aap_dir; do
-    find "$aap_dir" -name "*.yaml" -type f | sort | while read aap_file; do
+  for aap_dir in $(find ${NAMESPACES_PATH} -name "ansibleautomationplatforms" -type d 2>/dev/null); do
+    for aap_file in $(find "$aap_dir" -name "*.yaml" -type f | sort); do
       filename=$(basename "$aap_file")
       namespace=$(echo "$aap_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
-      echo "$namespace|🏢|AAP|namespaces/$namespace/aap.ansible.com/ansibleautomationplatforms/$filename|$filename" >> $TEMP_CR_FILE
+      relative_path=$(echo "$aap_file" | sed "s|${BASE_COLLECTION_PATH}/||")
+      echo "$namespace|🏢|AAP|$relative_path|$filename" >> $TEMP_CR_FILE
     done
   done
 
   # AutomationController instances
-  find ${BASE_COLLECTION_PATH}/namespaces -name "automationcontrollers" -type d 2>/dev/null | while read ac_dir; do
-    find "$ac_dir" -name "*.yaml" -type f | sort | while read ac_file; do
+  for ac_dir in $(find ${NAMESPACES_PATH} -name "automationcontrollers" -type d 2>/dev/null); do
+    for ac_file in $(find "$ac_dir" -name "*.yaml" -type f | sort); do
       filename=$(basename "$ac_file")
       namespace=$(echo "$ac_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
-      echo "$namespace|🎮|AutomationController|namespaces/$namespace/automationcontroller.ansible.com/automationcontrollers/$filename|$filename" >> $TEMP_CR_FILE
+      relative_path=$(echo "$ac_file" | sed "s|${BASE_COLLECTION_PATH}/||")
+      echo "$namespace|🎮|AutomationController|$relative_path|$filename" >> $TEMP_CR_FILE
     done
   done
 
   # AutomationHub instances
-  find ${BASE_COLLECTION_PATH}/namespaces -name "automationhubs" -type d 2>/dev/null | while read ah_dir; do
-    find "$ah_dir" -name "*.yaml" -type f | sort | while read ah_file; do
+  for ah_dir in $(find ${NAMESPACES_PATH} -name "automationhubs" -type d 2>/dev/null); do
+    for ah_file in $(find "$ah_dir" -name "*.yaml" -type f | sort); do
       filename=$(basename "$ah_file")
       namespace=$(echo "$ah_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
-      echo "$namespace|📦|AutomationHub|namespaces/$namespace/automationhub.ansible.com/automationhubs/$filename|$filename" >> $TEMP_CR_FILE
+      relative_path=$(echo "$ah_file" | sed "s|${BASE_COLLECTION_PATH}/||")
+      echo "$namespace|📦|AutomationHub|$relative_path|$filename" >> $TEMP_CR_FILE
     done
   done
 
   # EDA instances
-  find ${BASE_COLLECTION_PATH}/namespaces -name "edas" -type d 2>/dev/null | while read eda_dir; do
-    find "$eda_dir" -name "*.yaml" -type f | sort | while read eda_file; do
+  for eda_dir in $(find ${NAMESPACES_PATH} -name "edas" -type d 2>/dev/null); do
+    for eda_file in $(find "$eda_dir" -name "*.yaml" -type f | sort); do
       filename=$(basename "$eda_file")
       namespace=$(echo "$eda_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
-      echo "$namespace|⚡|EDA|namespaces/$namespace/eda.ansible.com/edas/$filename|$filename" >> $TEMP_CR_FILE
+      relative_path=$(echo "$eda_file" | sed "s|${BASE_COLLECTION_PATH}/||")
+      echo "$namespace|⚡|EDA|$relative_path|$filename" >> $TEMP_CR_FILE
     done
   done
 
   # AnsibleLightspeed instances
-  find ${BASE_COLLECTION_PATH}/namespaces -name "ansiblelightspeeds" -type d 2>/dev/null | while read als_dir; do
-    find "$als_dir" -name "*.yaml" -type f | sort | while read als_file; do
+  for als_dir in $(find ${NAMESPACES_PATH} -name "ansiblelightspeeds" -type d 2>/dev/null); do
+    for als_file in $(find "$als_dir" -name "*.yaml" -type f | sort); do
       filename=$(basename "$als_file")
       namespace=$(echo "$als_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
-      echo "$namespace|💡|AnsibleLightspeed|namespaces/$namespace/lightspeed.ansible.com/ansiblelightspeeds/$filename|$filename" >> $TEMP_CR_FILE
+      relative_path=$(echo "$als_file" | sed "s|${BASE_COLLECTION_PATH}/||")
+      echo "$namespace|💡|AnsibleLightspeed|$relative_path|$filename" >> $TEMP_CR_FILE
     done
   done
 
