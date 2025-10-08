@@ -53,12 +53,54 @@ for a in $NS; do
 
   # Collect PVC status and common resources for each namespace
   echo "Collecting PVC status and common resources for namespace: $a"
+
+  # PVC status with namespace header
+  echo "" >> ${BASE_COLLECTION_PATH}/pvc-status.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/pvc-status.log
+  echo "NAMESPACE: $a" >> ${BASE_COLLECTION_PATH}/pvc-status.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/pvc-status.log
   oc get pvc -n $a -o wide >> ${BASE_COLLECTION_PATH}/pvc-status.log 2>/dev/null || echo "No PVCs found in namespace $a" >> ${BASE_COLLECTION_PATH}/pvc-status.log
+
+  # Deployments with namespace header
+  echo "" >> ${BASE_COLLECTION_PATH}/deployments.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/deployments.log
+  echo "NAMESPACE: $a" >> ${BASE_COLLECTION_PATH}/deployments.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/deployments.log
   oc get deployments -n $a -o wide >> ${BASE_COLLECTION_PATH}/deployments.log 2>/dev/null || echo "No deployments found in namespace $a" >> ${BASE_COLLECTION_PATH}/deployments.log
+
+  # Services with namespace header
+  echo "" >> ${BASE_COLLECTION_PATH}/services.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/services.log
+  echo "NAMESPACE: $a" >> ${BASE_COLLECTION_PATH}/services.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/services.log
   oc get services -n $a -o wide >> ${BASE_COLLECTION_PATH}/services.log 2>/dev/null || echo "No services found in namespace $a" >> ${BASE_COLLECTION_PATH}/services.log
-  oc get configmaps -n $a >> ${BASE_COLLECTION_PATH}/configmaps.log 2>/dev/null || echo "No configmaps found in namespace $a" >> ${BASE_COLLECTION_PATH}/configmaps.log
-  oc get secrets -n $a >> ${BASE_COLLECTION_PATH}/secrets.log 2>/dev/null || echo "No secrets found in namespace $a" >> ${BASE_COLLECTION_PATH}/secrets.log
+
+  # ConfigMaps with namespace header
+  echo "" >> ${BASE_COLLECTION_PATH}/configmaps.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/configmaps.log
+  echo "NAMESPACE: $a" >> ${BASE_COLLECTION_PATH}/configmaps.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/configmaps.log
+  oc get configmaps -n $a -o wide >> ${BASE_COLLECTION_PATH}/configmaps.log 2>/dev/null || echo "No configmaps found in namespace $a" >> ${BASE_COLLECTION_PATH}/configmaps.log
+
+  # Secrets with namespace header
+  echo "" >> ${BASE_COLLECTION_PATH}/secrets.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/secrets.log
+  echo "NAMESPACE: $a" >> ${BASE_COLLECTION_PATH}/secrets.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/secrets.log
+  oc get secrets -n $a -o wide >> ${BASE_COLLECTION_PATH}/secrets.log 2>/dev/null || echo "No secrets found in namespace $a" >> ${BASE_COLLECTION_PATH}/secrets.log
+
+  # Routes with namespace header
+  echo "" >> ${BASE_COLLECTION_PATH}/routes.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/routes.log
+  echo "NAMESPACE: $a" >> ${BASE_COLLECTION_PATH}/routes.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/routes.log
   oc get routes -n $a -o wide >> ${BASE_COLLECTION_PATH}/routes.log 2>/dev/null || echo "No routes found in namespace $a" >> ${BASE_COLLECTION_PATH}/routes.log
+
+  # Ingress with namespace header
+  echo "" >> ${BASE_COLLECTION_PATH}/ingress.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/ingress.log
+  echo "NAMESPACE: $a" >> ${BASE_COLLECTION_PATH}/ingress.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/ingress.log
   oc get ingress -n $a -o wide >> ${BASE_COLLECTION_PATH}/ingress.log 2>/dev/null || echo "No ingress found in namespace $a" >> ${BASE_COLLECTION_PATH}/ingress.log
 done
 
@@ -180,11 +222,13 @@ EOF
   echo "        <h2>Error Analysis</h2>" >> $SUMMARY_FILE
   echo "        <p>Searching for errors in collected logs...</p>" >> $SUMMARY_FILE
 
-  # Search for errors in all log files
+  # Search for errors in all log files (excluding migration-related false positives)
   > $ERROR_SUMMARY
   find ${BASE_COLLECTION_PATH} -name "*.log" -type f | while read logfile; do
     echo "Analyzing: $logfile" >> $ERROR_SUMMARY
-    grep -i -n -E "(error|exception|failed|fatal|panic|traceback)" "$logfile" 2>/dev/null | head -20 >> $ERROR_SUMMARY || true
+    grep -i -n -E "(error|exception|failed|fatal|panic|traceback)" "$logfile" 2>/dev/null | \
+      grep -v -E "(0007_alter_validators_add_error_messages|0009_remove_task_non_fatal_errors|0010_servicecluster_healthy_panic_threshold_and_more)" | \
+      head -20 >> $ERROR_SUMMARY || true
     echo "---" >> $ERROR_SUMMARY
   done
 
