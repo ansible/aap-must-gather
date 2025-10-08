@@ -178,7 +178,7 @@ generate_summary_report() {
   ERROR_SUMMARY="${BASE_COLLECTION_PATH}/reports/error-summary.log"
 
   # Create HTML header
-  cat > $SUMMARY_FILE << 'EOF'
+  cat > $SUMMARY_FILE << EOF
 <!DOCTYPE html>
 <html>
 <head>
@@ -218,6 +218,151 @@ EOF
 
   echo "    </div>" >> $SUMMARY_FILE
 
+  # Add AAP Custom Resources table
+  echo "    <div class='section'>" >> $SUMMARY_FILE
+  echo "        <h2>AAP Custom Resources</h2>" >> $SUMMARY_FILE
+  echo "        <style>" >> $SUMMARY_FILE
+  echo "            .namespace-separator { border-top: 3px solid #333; background-color: #f8f9fa; font-weight: bold; }" >> $SUMMARY_FILE
+  echo "        </style>" >> $SUMMARY_FILE
+  echo "        <table>" >> $SUMMARY_FILE
+  echo "            <tr><th>Type</th><th>Name</th><th>Namespace</th><th>Version</th><th>Status</th></tr>" >> $SUMMARY_FILE
+
+  # Create a temporary file to collect all CR data
+  TEMP_CR_DATA=$(mktemp)
+
+  # Function to extract CR information and store in temp file
+  extract_cr_info() {
+    local cr_type="$1"
+    local cr_kind="$2"
+    local icon="$3"
+    local api_group="$4"
+
+    find ${BASE_COLLECTION_PATH}/namespaces -name "${cr_type}" -type d 2>/dev/null | while read cr_dir; do
+      find "$cr_dir" -name "*.yaml" -type f | sort | while read cr_file; do
+        local name=$(grep "^  name:" "$cr_file" | head -1 | awk '{print $2}')
+        local namespace=$(echo "$cr_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
+        local version="N/A"
+        local status_display="Unknown"
+
+        # Extract version based on CR type
+        if [ "$cr_kind" = "AutomationHub" ]; then
+          # For AutomationHub, look for deployedVersion
+          version=$(grep "^  deployedVersion:" "$cr_file" | head -1 | awk '{print $2}' || echo "N/A")
+        else
+          # For other CRs, look for version in status
+          version=$(grep "^  version:" "$cr_file" | head -1 | awk '{print $2}' || echo "N/A")
+        fi
+
+        # If version not found in status, try to get it from image field
+        if [ "$version" = "N/A" ]; then
+          version=$(grep "^  image:" "$cr_file" | head -1 | sed -n 's/.*:\([^:]*\)$/\1/p' || echo "N/A")
+        fi
+
+        # Extract status information with specific handling per CR type
+        if grep -q "^status:" "$cr_file"; then
+          case "$cr_kind" in
+            "AutomationHub")
+              # Look for Automationhub-Operator-Finished-Execution specifically
+              local hub_status=$(awk '
+                /type: Automationhub-Operator-Finished-Execution/ {
+                  # Found the type, now look backwards for status in the same condition block
+                  for (i = NR-1; i >= NR-5; i--) {
+                    if (i > 0 && lines[i] ~ /status:/) {
+                      gsub(/"/, "", lines[i])
+                      split(lines[i], parts, " ")
+                      print parts[2]
+                      break
+                    }
+                  }
+                }
+                { lines[NR] = $0 }
+              ' "$cr_file")
+              local hub_reason=$(awk '
+                /type: Automationhub-Operator-Finished-Execution/ {
+                  # Found the type, now look backwards for reason in the same condition block
+                  for (i = NR-1; i >= NR-5; i--) {
+                    if (i > 0 && lines[i] ~ /reason:/) {
+                      gsub(/"/, "", lines[i])
+                      split(lines[i], parts, " ")
+                      print parts[2]
+                      break
+                    }
+                  }
+                }
+                { lines[NR] = $0 }
+              ' "$cr_file")
+              if [ "$hub_status" = "True" ] && [ "$hub_reason" = "OperatorFinishedExecution" ]; then
+                status_display="Ready (OperatorFinishedExecution)"
+              elif [ "$hub_status" = "True" ]; then
+                status_display="Ready ($hub_reason)"
+              elif [ "$hub_status" = "False" ]; then
+                status_display="Not Ready ($hub_reason)"
+              else
+                status_display="Unknown"
+              fi
+              ;;
+            *)
+              # For other CRs, look for standard conditions with reasons
+              local running_status=$(awk '/type: Running/{found=1} found && /status:/{print $2; exit}' "$cr_file" | tr -d '"')
+              local running_reason=$(awk '/type: Running/{found=1} found && /reason:/{print $2; exit}' "$cr_file" | tr -d '"')
+              local successful_status=$(awk '/type: Successful/{found=1} found && /status:/{print $2; exit}' "$cr_file" | tr -d '"')
+              local successful_reason=$(awk '/type: Successful/{found=1} found && /reason:/{print $2; exit}' "$cr_file" | tr -d '"')
+              local failure_status=$(awk '/type: Failure/{found=1} found && /status:/{print $2; exit}' "$cr_file" | tr -d '"')
+              local failure_reason=$(awk '/type: Failure/{found=1} found && /reason:/{print $2; exit}' "$cr_file" | tr -d '"')
+
+              if [ "$running_status" = "True" ]; then
+                status_display="Running ($running_reason)"
+              elif [ "$successful_status" = "True" ]; then
+                status_display="Successful ($successful_reason)"
+              elif [ "$failure_status" = "True" ]; then
+                status_display="Failed ($failure_reason)"
+              elif [ "$running_status" = "False" ] || [ "$successful_status" = "False" ]; then
+                local reason="$running_reason"
+                [ -n "$successful_reason" ] && reason="$successful_reason"
+                status_display="Not Ready ($reason)"
+              fi
+              ;;
+          esac
+        fi
+
+        # Store data in format: namespace|icon|cr_kind|name|version|status_display
+        echo "$namespace|$icon|$cr_kind|$name|$version|$status_display" >> $TEMP_CR_DATA
+      done
+    done
+  }
+
+  # Extract information for each CR type
+  extract_cr_info "ansibleautomationplatforms" "AAP" "🏢" "aap.ansible.com"
+  extract_cr_info "automationcontrollers" "AutomationController" "🎮" "automationcontroller.ansible.com"
+  extract_cr_info "automationhubs" "AutomationHub" "📦" "automationhub.ansible.com"
+  extract_cr_info "edas" "EDA" "⚡" "eda.ansible.com"
+  extract_cr_info "ansiblelightspeeds" "AnsibleLightspeed" "💡" "lightspeed.ansible.com"
+
+  # Sort by namespace and generate grouped table
+  if [ -f "$TEMP_CR_DATA" ] && [ -s "$TEMP_CR_DATA" ]; then
+    local prev_namespace=""
+    sort "$TEMP_CR_DATA" | while IFS='|' read namespace icon cr_kind name version status_display; do
+      # Add namespace separator if this is a new namespace
+      if [ "$namespace" != "$prev_namespace" ]; then
+        if [ -n "$prev_namespace" ]; then
+          # Add a separator row between namespaces
+          echo "            <tr class='namespace-separator'><td colspan='5' style='text-align: center; padding: 8px;'>───────────────────────────────────────────────────────────────</td></tr>" >> $SUMMARY_FILE
+        fi
+        prev_namespace="$namespace"
+      fi
+      echo "            <tr><td>$icon $cr_kind</td><td>$name</td><td>$namespace</td><td>$version</td><td>$status_display</td></tr>" >> $SUMMARY_FILE
+    done
+  else
+    echo "            <tr><td colspan='5' style='text-align: center; font-style: italic;'>No AAP Custom Resources found in the collected data.</td></tr>" >> $SUMMARY_FILE
+  fi
+
+  # Clean up temporary file
+  rm -f "$TEMP_CR_DATA"
+
+  echo "        </table>" >> $SUMMARY_FILE
+  echo "        <p><em>Custom Resource instances grouped by namespace with their current version and status information.</em></p>" >> $SUMMARY_FILE
+  echo "    </div>" >> $SUMMARY_FILE
+
   # Analyze errors in log files
   echo "    <div class='section'>" >> $SUMMARY_FILE
   echo "        <h2>Error Analysis</h2>" >> $SUMMARY_FILE
@@ -253,7 +398,7 @@ generate_index_html() {
 
   INDEX_FILE="${BASE_COLLECTION_PATH}/index.html"
 
-  cat > $INDEX_FILE << 'EOF'
+  cat > $INDEX_FILE << EOF
 <!DOCTYPE html>
 <html>
 <head>
