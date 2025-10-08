@@ -130,21 +130,95 @@ collect_init_container_logs() {
   done
 }
 
+# Function to collect migration job logs
+collect_migration_job_logs() {
+  local namespace=$1
+  echo "Collecting migration job logs for namespace: $namespace"
+
+  # Collect logs from controller migration jobs
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=automationcontroller --field-selector=status.phase=Succeeded -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    # Check if this is a migration job pod
+    if [[ "$pod" == *"migration"* ]]; then
+      echo "Found controller migration job pod: $pod"
+      # Get the container name for the migration job
+      migration_container=$(oc get pod $pod -n $namespace -o jsonpath='{.spec.containers[0].name}' 2>/dev/null)
+      if [ ! -z "$migration_container" ]; then
+        echo "Collecting logs for migration job container: $migration_container in pod: $pod"
+        oc logs $pod -n $namespace -c $migration_container > "${BASE_COLLECTION_PATH}/logs/${pod}-${migration_container}.log" 2>/dev/null || echo "Failed to collect logs for migration job $migration_container in pod $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      fi
+    fi
+  done
+
+  # Also collect logs from any running or failed migration jobs
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=automationcontroller --field-selector=status.phase=Failed -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    if [[ "$pod" == *"migration"* ]]; then
+      echo "Found failed controller migration job pod: $pod"
+      migration_container=$(oc get pod $pod -n $namespace -o jsonpath='{.spec.containers[0].name}' 2>/dev/null)
+      if [ ! -z "$migration_container" ]; then
+        echo "Collecting logs for failed migration job container: $migration_container in pod: $pod"
+        oc logs $pod -n $namespace -c $migration_container > "${BASE_COLLECTION_PATH}/logs/${pod}-${migration_container}.log" 2>/dev/null || echo "Failed to collect logs for failed migration job $migration_container in pod $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      fi
+    fi
+  done
+
+  # Collect logs from gateway migration jobs
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/name=automation-platform-gateway --field-selector=status.phase=Succeeded -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    if [[ "$pod" == *"migration"* ]]; then
+      echo "Found gateway migration job pod: $pod"
+      migration_container=$(oc get pod $pod -n $namespace -o jsonpath='{.spec.containers[0].name}' 2>/dev/null)
+      if [ ! -z "$migration_container" ]; then
+        echo "Collecting logs for gateway migration job container: $migration_container in pod: $pod"
+        oc logs $pod -n $namespace -c $migration_container > "${BASE_COLLECTION_PATH}/logs/${pod}-${migration_container}.log" 2>/dev/null || echo "Failed to collect logs for gateway migration job $migration_container in pod $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      fi
+    fi
+  done
+
+  # Collect logs from EDA migration jobs
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=eda --field-selector=status.phase=Succeeded -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    if [[ "$pod" == *"migration"* ]]; then
+      echo "Found EDA migration job pod: $pod"
+      migration_container=$(oc get pod $pod -n $namespace -o jsonpath='{.spec.containers[0].name}' 2>/dev/null)
+      if [ ! -z "$migration_container" ]; then
+        echo "Collecting logs for EDA migration job container: $migration_container in pod: $pod"
+        oc logs $pod -n $namespace -c $migration_container > "${BASE_COLLECTION_PATH}/logs/${pod}-${migration_container}.log" 2>/dev/null || echo "Failed to collect logs for EDA migration job $migration_container in pod $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      fi
+    fi
+  done
+}
+
 # Function to collect showmigrations output
 collect_showmigrations() {
   local namespace=$1
   echo "Collecting showmigrations output for namespace: $namespace"
 
-  # Collect from automation controller pods
+  # Collect from automation controller task pods
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=task -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     echo "Collecting showmigrations from controller task pod: $pod"
-    oc exec $pod -n $namespace -c automation-controller-task -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c automation-controller-task -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+  done
+
+  # Collect from automation controller web pods
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=automationcontroller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    # Check if this is a web pod (not task pod)
+    if [[ "$pod" == *"web"* ]]; then
+      echo "Collecting showmigrations from controller web pod: $pod"
+      oc exec $pod -n $namespace -c myaap-controller-web -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    fi
   done
 
   # Collect from gateway pods
-  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/name=automation-platform-gateway -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=aap-gateway -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     echo "Collecting showmigrations from gateway pod: $pod"
     oc exec $pod -n $namespace -c api -- aap-gateway-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-gateway-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from gateway $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+  done
+
+  # Collect from automation hub API pods
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/name=automationhub-api -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    echo "Collecting showmigrations from hub API pod: $pod"
+    # Try multiple possible management commands for hub
+    oc exec $pod -n $namespace -c api -- pulpcore-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-showmigrations.log" 2>/dev/null || \
+    oc exec $pod -n $namespace -c api -- python -m pulpcore.app.manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-showmigrations.log" 2>/dev/null || \
+    echo "Failed to collect showmigrations from hub $pod - management command not available" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 
   # Collect from EDA pods
@@ -160,6 +234,7 @@ if [ ! -z "$NS" ]; then
   for a in $NS; do
     echo "Processing namespace: $a"
     collect_init_container_logs $a || echo "Failed to collect init container logs for $a"
+    collect_migration_job_logs $a || echo "Failed to collect migration job logs for $a"
     collect_showmigrations $a || echo "Failed to collect showmigrations for $a"
   done
 else
@@ -696,6 +771,7 @@ generate_index_html || echo "Failed to generate index.html"
 echo "Must-gather collection completed successfully!"
 echo "Enhanced features added:"
 echo "- initContainer logs collection"
+echo "- migration job logs collection"
 echo "- showmigrations output capture"
 echo "- PVC status and common resources"
 echo "- Error analysis and summary report"
