@@ -11,23 +11,20 @@ A comprehensive must-gather tool for debugging Ansible Automation Platform (AAP)
 - **Error Analysis**: Automated error detection with intelligent filtering and HTML summary reports
 - **Interactive Interface**: Professional HTML navigation interface for easy data exploration
 
-## Quick Start
+## Usage
 
-### Build and Push Image
+### Production Use
 
 ```bash
-# Build the image
-podman build -f Dockerfile --tag quay.io/<username>/aap-must-gather:latest .
-
-# Push to registry
-podman push quay.io/<username>/aap-must-gather:latest
+# Collect AAP debugging data from your cluster
+oc adm must-gather --image=quay.io/<username>/aap-must-gather:latest
 ```
 
-### Run Must Gather
+### Testing/Development
 
 ```bash
-# Collect AAP debugging data
-oc adm must-gather --image=quay.io/<username>/aap-must-gather:latest
+# Test the gather script directly (requires oc access to cluster)
+BASE_COLLECTION_PATH="./test-output" bash collection-scripts/gather
 ```
 
 ### View Results
@@ -35,44 +32,12 @@ oc adm must-gather --image=quay.io/<username>/aap-must-gather:latest
 Open the generated `index.html` file in your browser to navigate the collected data:
 
 ```bash
-# Find the output directory
+# For production must-gather output
 ls -la must-gather.local.*
-
-# Open the interactive interface
 open must-gather.local.*/index.html
-```
 
-## Local Development and Testing
-
-### Test Script Functionality
-
-```bash
-# Test individual components without cluster connection
-bash test-enhanced-status.sh
-bash test-real-data.sh
-
-# View generated test outputs
-open test-*-output.html
-```
-
-### Test with Local Cluster
-
-```bash
-# Run the gather script directly (requires oc access)
-BASE_COLLECTION_PATH="./test-output" bash collection-scripts/gather
-
-# View results
+# For testing output
 open test-output/index.html
-```
-
-### Validate Script Syntax
-
-```bash
-# Check for syntax errors
-bash -n collection-scripts/gather
-
-# Run enhanced tests
-bash test-enhanced-gather.sh
 ```
 
 ## Output Structure
