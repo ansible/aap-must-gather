@@ -1,7 +1,13 @@
 #!/bin/bash
 
-BASE_COLLECTION_PATH="/must-gather"
+# Set BASE_COLLECTION_PATH if not already set by must-gather framework
+if [ -z "$BASE_COLLECTION_PATH" ]; then
+  BASE_COLLECTION_PATH="/must-gather"
+fi
 mkdir -p ${BASE_COLLECTION_PATH}
+mkdir -p ${BASE_COLLECTION_PATH}/logs
+mkdir -p ${BASE_COLLECTION_PATH}/commands
+mkdir -p ${BASE_COLLECTION_PATH}/reports
 
 ANSIBLECRD="automationcontrollerbackups.automationcontroller.ansible.com \
   automationcontrollerrestores.automationcontroller.ansible.com \
@@ -26,6 +32,10 @@ ANSIBLECRD="automationcontrollerbackups.automationcontroller.ansible.com \
   ansibleautomationplatformbackups.aap.ansible.com \
   ansibleautomationplatformrestores.aap.ansible.com"
 
+# Collect cluster version information
+echo "Collecting cluster version information..."
+oc adm inspect clusterversion --dest-dir=must-gather
+
 oc adm inspect customresourcedefinition.apiextensions.k8s.io $ANSIBLECRD --dest-dir=must-gather
 oc adm inspect customresourcedefinition.apiextensions.k8s.io subscriptions.operators.coreos.com clusterserviceversions.operators.coreos.com --dest-dir=must-gather
 
@@ -40,6 +50,16 @@ for a in $NS; do
   oc adm inspect ns/"$a"  --dest-dir=must-gather
   oc adm inspect -n $a csv --dest-dir=must-gather
   oc get pods -n $a >> ${BASE_COLLECTION_PATH}/gather-aap.log
+
+  # Collect PVC status and common resources for each namespace
+  echo "Collecting PVC status and common resources for namespace: $a"
+  oc get pvc -n $a -o wide >> ${BASE_COLLECTION_PATH}/pvc-status.log 2>/dev/null || echo "No PVCs found in namespace $a" >> ${BASE_COLLECTION_PATH}/pvc-status.log
+  oc get deployments -n $a -o wide >> ${BASE_COLLECTION_PATH}/deployments.log 2>/dev/null || echo "No deployments found in namespace $a" >> ${BASE_COLLECTION_PATH}/deployments.log
+  oc get services -n $a -o wide >> ${BASE_COLLECTION_PATH}/services.log 2>/dev/null || echo "No services found in namespace $a" >> ${BASE_COLLECTION_PATH}/services.log
+  oc get configmaps -n $a >> ${BASE_COLLECTION_PATH}/configmaps.log 2>/dev/null || echo "No configmaps found in namespace $a" >> ${BASE_COLLECTION_PATH}/configmaps.log
+  oc get secrets -n $a >> ${BASE_COLLECTION_PATH}/secrets.log 2>/dev/null || echo "No secrets found in namespace $a" >> ${BASE_COLLECTION_PATH}/secrets.log
+  oc get routes -n $a -o wide >> ${BASE_COLLECTION_PATH}/routes.log 2>/dev/null || echo "No routes found in namespace $a" >> ${BASE_COLLECTION_PATH}/routes.log
+  oc get ingress -n $a -o wide >> ${BASE_COLLECTION_PATH}/ingress.log 2>/dev/null || echo "No ingress found in namespace $a" >> ${BASE_COLLECTION_PATH}/ingress.log
 done
 
 for b in $(oc get -A subs --field-selector='metadata.name=ansible-automation-platform-operator' -o custom-columns=NAMESPACE:.metadata.namespace); do
@@ -48,6 +68,358 @@ for b in $(oc get -A subs --field-selector='metadata.name=ansible-automation-pla
   oc adm inspect -n $b subs --dest-dir=must-gather
 done
 
+# Function to collect initContainer logs
+collect_init_container_logs() {
+  local namespace=$1
+  echo "Collecting initContainer logs for namespace: $namespace"
+
+  # Get all pods in the namespace
+  for pod in $(oc get pods -n $namespace -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    # Check if pod has initContainers
+    init_containers=$(oc get pod $pod -n $namespace -o jsonpath='{.spec.initContainers[*].name}' 2>/dev/null)
+    if [ ! -z "$init_containers" ]; then
+      echo "Found initContainers in pod $pod: $init_containers"
+      for init_container in $init_containers; do
+        echo "Collecting logs for initContainer: $init_container in pod: $pod"
+        oc logs $pod -n $namespace -c $init_container > "${BASE_COLLECTION_PATH}/logs/${pod}-${init_container}-init.log" 2>/dev/null || echo "Failed to collect logs for initContainer $init_container in pod $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      done
+    fi
+  done
+}
+
+# Function to collect showmigrations output
+collect_showmigrations() {
+  local namespace=$1
+  echo "Collecting showmigrations output for namespace: $namespace"
+
+  # Collect from automation controller pods
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=task -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    echo "Collecting showmigrations from controller task pod: $pod"
+    oc exec $pod -n $namespace -c automation-controller-task -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+  done
+
+  # Collect from gateway pods
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/name=automation-platform-gateway -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    echo "Collecting showmigrations from gateway pod: $pod"
+    oc exec $pod -n $namespace -c api -- aap-gateway-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-gateway-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from gateway $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+  done
+
+  # Collect from EDA pods
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=eda-api -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    echo "Collecting showmigrations from EDA pod: $pod"
+    oc exec $pod -n $namespace -c eda-api -- aap-eda-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from EDA $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+  done
+}
+
+# Call functions for each AAP namespace
+echo "Found AAP namespaces: $NS"
+if [ ! -z "$NS" ]; then
+  for a in $NS; do
+    echo "Processing namespace: $a"
+    collect_init_container_logs $a || echo "Failed to collect init container logs for $a"
+    collect_showmigrations $a || echo "Failed to collect showmigrations for $a"
+  done
+else
+  echo "No AAP namespaces found, skipping custom collection functions"
+fi
+
 echo "WARNING: Collecting kernel messages on ALL nodes in your cluster. This could take a large amount of time."
 oc adm node-logs --role=master -l kubernetes.io/os=linux --grep kernel > "${BASE_COLLECTION_PATH}/master_dmesg.log"
 oc adm node-logs --role=worker -l kubernetes.io/os=linux --grep kernel > "${BASE_COLLECTION_PATH}/worker_dmesg.log"
+
+# Function to analyze errors and generate summary report
+generate_summary_report() {
+  echo "Generating summary report..."
+
+  SUMMARY_FILE="${BASE_COLLECTION_PATH}/reports/summary-report.html"
+  ERROR_SUMMARY="${BASE_COLLECTION_PATH}/reports/error-summary.log"
+
+  # Create HTML header
+  cat > $SUMMARY_FILE << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AAP Must-Gather Summary Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; }
+        .error { color: red; }
+        .warning { color: orange; }
+        .info { color: blue; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        pre { background-color: #f5f5f5; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>AAP Must-Gather Summary Report</h1>
+    <p>Generated on: $(date)</p>
+EOF
+
+  # Collect version information
+  echo "    <div class='section'>" >> $SUMMARY_FILE
+  echo "        <h2>Version Information</h2>" >> $SUMMARY_FILE
+
+  # Get cluster version
+  CLUSTER_VERSION=$(oc get clusterversion version -o jsonpath='{.status.desired.version}' 2>/dev/null || echo "Unknown")
+  echo "        <p><strong>OpenShift Version:</strong> $CLUSTER_VERSION</p>" >> $SUMMARY_FILE
+
+  # Get AAP operator version
+  AAP_VERSION=$(oc get csv -A -o jsonpath='{.items[?(@.spec.displayName=="Ansible Automation Platform")].spec.version}' 2>/dev/null | head -1 || echo "Unknown")
+  echo "        <p><strong>AAP Operator Version:</strong> $AAP_VERSION</p>" >> $SUMMARY_FILE
+
+  # Get upgrade status
+  UPGRADE_FROM=$(oc get clusterversion version -o jsonpath='{.status.history[1].version}' 2>/dev/null || echo "N/A")
+  echo "        <p><strong>Upgraded From:</strong> $UPGRADE_FROM</p>" >> $SUMMARY_FILE
+
+  echo "    </div>" >> $SUMMARY_FILE
+
+  # Analyze errors in log files
+  echo "    <div class='section'>" >> $SUMMARY_FILE
+  echo "        <h2>Error Analysis</h2>" >> $SUMMARY_FILE
+  echo "        <p>Searching for errors in collected logs...</p>" >> $SUMMARY_FILE
+
+  # Search for errors in all log files
+  > $ERROR_SUMMARY
+  find ${BASE_COLLECTION_PATH} -name "*.log" -type f | while read logfile; do
+    echo "Analyzing: $logfile" >> $ERROR_SUMMARY
+    grep -i -n -E "(error|exception|failed|fatal|panic|traceback)" "$logfile" 2>/dev/null | head -20 >> $ERROR_SUMMARY || true
+    echo "---" >> $ERROR_SUMMARY
+  done
+
+  # Add error summary to HTML
+  echo "        <h3>Error Summary</h3>" >> $SUMMARY_FILE
+  echo "        <pre>" >> $SUMMARY_FILE
+  head -100 $ERROR_SUMMARY >> $SUMMARY_FILE 2>/dev/null || echo "No errors found or error file not accessible" >> $SUMMARY_FILE
+  echo "        </pre>" >> $SUMMARY_FILE
+  echo "        <p><em>Full error analysis available in: reports/error-summary.log</em></p>" >> $SUMMARY_FILE
+  echo "    </div>" >> $SUMMARY_FILE
+
+  # Close HTML
+  echo "</body></html>" >> $SUMMARY_FILE
+
+  echo "Summary report generated: $SUMMARY_FILE"
+}
+
+# Function to generate index.html
+generate_index_html() {
+  echo "Generating index.html..."
+
+  INDEX_FILE="${BASE_COLLECTION_PATH}/index.html"
+
+  cat > $INDEX_FILE << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AAP Must-Gather Index</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            color: #333;
+            border-bottom: 2px solid #e74c3c;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #fafafa;
+        }
+        .section h2 {
+            color: #2c3e50;
+            margin-top: 0;
+        }
+        .file-list {
+            columns: 2;
+            column-gap: 20px;
+        }
+        .file-list li {
+            break-inside: avoid;
+            margin: 5px 0;
+        }
+        a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        .important {
+            background-color: #fff3cd;
+            border-color: #ffeaa7;
+            color: #856404;
+        }
+        .nav-menu {
+            background-color: #34495e;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .nav-menu a {
+            color: white;
+            margin-right: 20px;
+            padding: 5px 10px;
+            border-radius: 3px;
+        }
+        .nav-menu a:hover {
+            background-color: #2c3e50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔧 AAP Must-Gather Collection</h1>
+            <p>Comprehensive debugging information for Ansible Automation Platform</p>
+            <p><em>Generated on: $(date)</em></p>
+        </div>
+
+        <div class="nav-menu">
+            <a href="#summary">📊 Summary Report</a>
+            <a href="#logs">📋 Logs</a>
+            <a href="#commands">⚙️ Commands</a>
+            <a href="#resources">🗂️ Resources</a>
+            <a href="#cluster">🏗️ Cluster Info</a>
+        </div>
+
+        <div class="section important" id="summary">
+            <h2>📊 Summary Report</h2>
+            <p>Start here for a high-level overview of your AAP deployment:</p>
+            <ul>
+                <li><a href="reports/summary-report.html"><strong>📈 Comprehensive Summary Report</strong></a> - Version info, error analysis, and key findings</li>
+                <li><a href="reports/error-summary.log">🚨 Error Summary Log</a> - Detailed error analysis from all log files</li>
+            </ul>
+        </div>
+
+        <div class="section" id="logs">
+            <h2>📋 Application Logs</h2>
+            <p>Container and initContainer logs from AAP components:</p>
+            <div class="file-list">
+                <ul>
+EOF
+
+  # Add log files to index
+  if [ -d "${BASE_COLLECTION_PATH}/logs" ]; then
+    find ${BASE_COLLECTION_PATH}/logs -name "*.log" -type f | sort | while read logfile; do
+      filename=$(basename "$logfile")
+      echo "                    <li><a href=\"logs/$filename\">$filename</a></li>" >> $INDEX_FILE
+    done
+  fi
+
+  cat >> $INDEX_FILE << 'EOF'
+                </ul>
+            </div>
+        </div>
+
+        <div class="section" id="commands">
+            <h2>⚙️ Command Outputs</h2>
+            <p>Output from management commands (showmigrations, etc.):</p>
+            <div class="file-list">
+                <ul>
+EOF
+
+  # Add command output files to index
+  if [ -d "${BASE_COLLECTION_PATH}/commands" ]; then
+    find ${BASE_COLLECTION_PATH}/commands -name "*.log" -type f | sort | while read cmdfile; do
+      filename=$(basename "$cmdfile")
+      echo "                    <li><a href=\"commands/$filename\">$filename</a></li>" >> $INDEX_FILE
+    done
+  fi
+
+  cat >> $INDEX_FILE << 'EOF'
+                </ul>
+            </div>
+        </div>
+
+        <div class="section" id="resources">
+            <h2>🗂️ Kubernetes Resources</h2>
+            <p>Status and configuration of Kubernetes resources:</p>
+            <ul>
+                <li><a href="pvc-status.log">💾 PVC Status</a></li>
+                <li><a href="deployments.log">🚀 Deployments</a></li>
+                <li><a href="services.log">🌐 Services</a></li>
+                <li><a href="routes.log">🛣️ Routes</a></li>
+                <li><a href="configmaps.log">⚙️ ConfigMaps</a></li>
+                <li><a href="secrets.log">🔐 Secrets</a></li>
+                <li><a href="ingress.log">🚪 Ingress</a></li>
+            </ul>
+        </div>
+
+        <div class="section" id="cluster">
+            <h2>🏗️ Cluster Information</h2>
+            <p>OpenShift cluster and node information:</p>
+            <ul>
+                <li><a href="gather-aap.log">📝 Gather Log</a></li>
+                <li><a href="master_dmesg.log">🖥️ Master Node Messages</a></li>
+                <li><a href="worker_dmesg.log">⚙️ Worker Node Messages</a></li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>📁 Raw Data</h2>
+            <p>Complete OpenShift resource dumps and configurations:</p>
+            <ul>
+                <li><a href="namespaces/">📂 Namespace Resources</a> - Complete resource dumps organized by namespace</li>
+                <li><a href="cluster-scoped-resources/">🌐 Cluster Resources</a> - Cluster-wide resource information</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>ℹ️ How to Use This Must-Gather</h2>
+            <ol>
+                <li><strong>Start with the Summary Report</strong> - Review the comprehensive summary for key findings</li>
+                <li><strong>Check Error Analysis</strong> - Look at the error summary for immediate issues</li>
+                <li><strong>Review Application Logs</strong> - Examine specific component logs for detailed troubleshooting</li>
+                <li><strong>Analyze Resource Status</strong> - Check PVC, deployment, and service status</li>
+                <li><strong>Deep Dive</strong> - Use the raw namespace data for detailed investigation</li>
+            </ol>
+        </div>
+
+        <div class="section">
+            <h2>🔍 Quick Links</h2>
+            <p>Common troubleshooting starting points:</p>
+            <ul>
+                <li><a href="reports/summary-report.html">🎯 Start Here - Summary Report</a></li>
+                <li><a href="pvc-status.log">💾 Storage Issues - PVC Status</a></li>
+                <li><a href="deployments.log">🚀 Pod Issues - Deployment Status</a></li>
+                <li><a href="reports/error-summary.log">🚨 Application Errors - Error Summary</a></li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
+EOF
+
+  echo "Index.html generated: $INDEX_FILE"
+}
+
+# Generate the summary report and index
+echo "Generating enhanced reports..."
+generate_summary_report || echo "Failed to generate summary report"
+generate_index_html || echo "Failed to generate index.html"
+
+echo "Must-gather collection completed successfully!"
+echo "Enhanced features added:"
+echo "- initContainer logs collection"
+echo "- showmigrations output capture"
+echo "- PVC status and common resources"
+echo "- Error analysis and summary report"
+echo "- Interactive index.html for easy navigation"
+echo ""
+echo "Open index.html in a web browser to navigate the collected data."
