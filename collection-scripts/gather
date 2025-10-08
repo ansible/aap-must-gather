@@ -12,6 +12,7 @@ mkdir -p ${BASE_COLLECTION_PATH}/reports
 ANSIBLECRD="automationcontrollerbackups.automationcontroller.ansible.com \
   automationcontrollerrestores.automationcontroller.ansible.com \
   automationcontrollers.automationcontroller.ansible.com \
+  automationcontrollermeshingresses.automationcontroller.ansible.com \
   automationhubbackups.automationhub.ansible.com \
   automationhubrestores.automationhub.ansible.com \
   automationhubs.automationhub.ansible.com \
@@ -339,6 +340,7 @@ generate_index_html() {
             <a href="#logs">📋 Logs</a>
             <a href="#commands">⚙️ Commands</a>
             <a href="#resources">🗂️ Resources</a>
+            <a href="#aap-crs">🎯 AAP Custom Resources</a>
             <a href="#cluster">🏗️ Cluster Info</a>
         </div>
 
@@ -413,6 +415,94 @@ EOF
                 <li><a href="master_dmesg.log">🖥️ Master Node Messages</a></li>
                 <li><a href="worker_dmesg.log">⚙️ Worker Node Messages</a></li>
             </ul>
+        </div>
+
+        <div class="section" id="aap-crs">
+            <h2>🎯 AAP Custom Resources</h2>
+            <p>Ansible Automation Platform custom resource instances grouped by namespace:</p>
+            <div class="file-list">
+                <ul>
+EOF
+
+  # Create a temporary file to collect all AAP custom resources by namespace
+  TEMP_CR_FILE=$(mktemp)
+
+  # Find all AAP custom resource instances and organize by namespace
+  # AAP instances
+  find ${BASE_COLLECTION_PATH}/namespaces -name "ansibleautomationplatforms" -type d 2>/dev/null | while read aap_dir; do
+    find "$aap_dir" -name "*.yaml" -type f | sort | while read aap_file; do
+      filename=$(basename "$aap_file")
+      namespace=$(echo "$aap_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
+      echo "$namespace|🏢|AAP|namespaces/$namespace/aap.ansible.com/ansibleautomationplatforms/$filename|$filename" >> $TEMP_CR_FILE
+    done
+  done
+
+  # AutomationController instances
+  find ${BASE_COLLECTION_PATH}/namespaces -name "automationcontrollers" -type d 2>/dev/null | while read ac_dir; do
+    find "$ac_dir" -name "*.yaml" -type f | sort | while read ac_file; do
+      filename=$(basename "$ac_file")
+      namespace=$(echo "$ac_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
+      echo "$namespace|🎮|AutomationController|namespaces/$namespace/automationcontroller.ansible.com/automationcontrollers/$filename|$filename" >> $TEMP_CR_FILE
+    done
+  done
+
+  # AutomationHub instances
+  find ${BASE_COLLECTION_PATH}/namespaces -name "automationhubs" -type d 2>/dev/null | while read ah_dir; do
+    find "$ah_dir" -name "*.yaml" -type f | sort | while read ah_file; do
+      filename=$(basename "$ah_file")
+      namespace=$(echo "$ah_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
+      echo "$namespace|📦|AutomationHub|namespaces/$namespace/automationhub.ansible.com/automationhubs/$filename|$filename" >> $TEMP_CR_FILE
+    done
+  done
+
+  # EDA instances
+  find ${BASE_COLLECTION_PATH}/namespaces -name "edas" -type d 2>/dev/null | while read eda_dir; do
+    find "$eda_dir" -name "*.yaml" -type f | sort | while read eda_file; do
+      filename=$(basename "$eda_file")
+      namespace=$(echo "$eda_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
+      echo "$namespace|⚡|EDA|namespaces/$namespace/eda.ansible.com/edas/$filename|$filename" >> $TEMP_CR_FILE
+    done
+  done
+
+  # AnsibleLightspeed instances
+  find ${BASE_COLLECTION_PATH}/namespaces -name "ansiblelightspeeds" -type d 2>/dev/null | while read als_dir; do
+    find "$als_dir" -name "*.yaml" -type f | sort | while read als_file; do
+      filename=$(basename "$als_file")
+      namespace=$(echo "$als_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
+      echo "$namespace|💡|AnsibleLightspeed|namespaces/$namespace/lightspeed.ansible.com/ansiblelightspeeds/$filename|$filename" >> $TEMP_CR_FILE
+    done
+  done
+
+  # Sort by namespace and generate the HTML
+  if [ -f "$TEMP_CR_FILE" ] && [ -s "$TEMP_CR_FILE" ]; then
+    sort "$TEMP_CR_FILE" | while IFS='|' read namespace icon type path filename; do
+      # Check if this is a new namespace
+      if [ "$namespace" != "$prev_namespace" ]; then
+        if [ -n "$prev_namespace" ]; then
+          echo "                    </ul>" >> $INDEX_FILE
+          echo "                    </li>" >> $INDEX_FILE
+        fi
+        echo "                    <li><strong>📁 Namespace: $namespace</strong>" >> $INDEX_FILE
+        echo "                    <ul style=\"margin-left: 20px;\">" >> $INDEX_FILE
+        prev_namespace="$namespace"
+      fi
+      echo "                        <li><a href=\"$path\">$icon $type: $filename</a></li>" >> $INDEX_FILE
+    done
+    # Close the last namespace
+    if [ -n "$prev_namespace" ]; then
+      echo "                    </ul>" >> $INDEX_FILE
+      echo "                    </li>" >> $INDEX_FILE
+    fi
+  else
+    echo "                    <li><em>No AAP custom resources found in the collected data.</em></li>" >> $INDEX_FILE
+  fi
+
+  # Clean up temporary file
+  rm -f "$TEMP_CR_FILE"
+
+  cat >> $INDEX_FILE << 'EOF'
+                </ul>
+            </div>
         </div>
 
         <div class="section">

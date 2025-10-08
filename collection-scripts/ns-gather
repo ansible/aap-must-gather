@@ -6,6 +6,7 @@ mkdir -p ${BASE_COLLECTION_PATH}
 ANSIBLECRD="automationcontrollerbackups.automationcontroller.ansible.com \
   automationcontrollerrestores.automationcontroller.ansible.com \
   automationcontrollers.automationcontroller.ansible.com \
+  automationcontrollermeshingresses.automationcontroller.ansible.com \
   automationhubbackups.automationhub.ansible.com \
   automationhubrestores.automationhub.ansible.com \
   automationhubs.automationhub.ansible.com \
