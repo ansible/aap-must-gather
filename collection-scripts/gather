@@ -798,8 +798,34 @@ EOF
             <h2>📁 Raw Data</h2>
             <p>Complete OpenShift resource dumps and configurations:</p>
             <ul>
-                <li><a href="namespaces/">📂 Namespace Resources</a> - Complete resource dumps organized by namespace</li>
-                <li><a href="cluster-scoped-resources/">🌐 Cluster Resources</a> - Cluster-wide resource information</li>
+EOF
+
+  # Add raw data links based on what actually exists
+  if [ -d "${BASE_COLLECTION_PATH}/must-gather/namespaces" ]; then
+    echo "                <li><a href=\"must-gather/namespaces/\">📂 Namespace Resources</a> - Complete resource dumps organized by namespace</li>" >> $INDEX_FILE
+  elif [ -d "${BASE_COLLECTION_PATH}/namespaces" ]; then
+    echo "                <li><a href=\"namespaces/\">📂 Namespace Resources</a> - Complete resource dumps organized by namespace</li>" >> $INDEX_FILE
+  fi
+
+  if [ -d "${BASE_COLLECTION_PATH}/must-gather/cluster-scoped-resources" ]; then
+    echo "                <li><a href=\"must-gather/cluster-scoped-resources/\">🌐 Cluster Resources</a> - Cluster-wide resource information</li>" >> $INDEX_FILE
+  elif [ -d "${BASE_COLLECTION_PATH}/cluster-scoped-resources" ]; then
+    echo "                <li><a href=\"cluster-scoped-resources/\">🌐 Cluster Resources</a> - Cluster-wide resource information</li>" >> $INDEX_FILE
+  fi
+
+  if [ -f "${BASE_COLLECTION_PATH}/must-gather/event-filter.html" ]; then
+    echo "                <li><a href=\"must-gather/event-filter.html\">🎯 Event Filter</a> - Interactive event filtering interface</li>" >> $INDEX_FILE
+  elif [ -f "${BASE_COLLECTION_PATH}/event-filter.html" ]; then
+    echo "                <li><a href=\"event-filter.html\">🎯 Event Filter</a> - Interactive event filtering interface</li>" >> $INDEX_FILE
+  fi
+
+  if [ -f "${BASE_COLLECTION_PATH}/must-gather/timestamp" ]; then
+    echo "                <li><a href=\"must-gather/timestamp\">⏰ Collection Timestamp</a> - When the data was collected</li>" >> $INDEX_FILE
+  elif [ -f "${BASE_COLLECTION_PATH}/timestamp" ]; then
+    echo "                <li><a href=\"timestamp\">⏰ Collection Timestamp</a> - When the data was collected</li>" >> $INDEX_FILE
+  fi
+
+  cat >> $INDEX_FILE << 'EOF'
             </ul>
         </div>
 
