@@ -186,6 +186,35 @@ collect_migration_job_logs() {
   done
 }
 
+# Function to collect operator pod logs
+collect_operator_logs() {
+  local namespace=$1
+  echo "Collecting operator pod logs for namespace: $namespace"
+
+  # Collect logs from AAP operator pods
+  for pod in $(oc get pods -n $namespace -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    # Check if this is an operator pod
+    if [[ "$pod" == *"operator-controller-manager"* ]]; then
+      echo "Found operator pod: $pod"
+
+      # Get all containers in the operator pod
+      containers=$(oc get pod $pod -n $namespace -o jsonpath='{.spec.containers[*].name}' 2>/dev/null)
+      if [ ! -z "$containers" ]; then
+        for container in $containers; do
+          echo "Collecting logs for operator container: $container in pod: $pod"
+          oc logs $pod -n $namespace -c $container > "${BASE_COLLECTION_PATH}/logs/${pod}-${container}-operator.log" 2>/dev/null || echo "Failed to collect logs for operator container $container in pod $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+        done
+      fi
+
+      # Also collect previous logs if available (useful for crashed operators)
+      for container in $containers; do
+        echo "Collecting previous logs for operator container: $container in pod: $pod"
+        oc logs $pod -n $namespace -c $container --previous > "${BASE_COLLECTION_PATH}/logs/${pod}-${container}-operator-previous.log" 2>/dev/null || echo "No previous logs available for operator container $container in pod $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      done
+    fi
+  done
+}
+
 # Function to collect showmigrations output
 collect_showmigrations() {
   local namespace=$1
@@ -235,6 +264,7 @@ if [ ! -z "$NS" ]; then
     echo "Processing namespace: $a"
     collect_init_container_logs $a || echo "Failed to collect init container logs for $a"
     collect_migration_job_logs $a || echo "Failed to collect migration job logs for $a"
+    collect_operator_logs $a || echo "Failed to collect operator logs for $a"
     collect_showmigrations $a || echo "Failed to collect showmigrations for $a"
   done
 else
@@ -564,6 +594,7 @@ generate_index_html() {
         <div class="nav-menu">
             <a href="#summary">📊 Summary Report</a>
             <a href="#logs">📋 Logs</a>
+            <a href="#operator-logs">🔧 Operator Logs</a>
             <a href="#commands">⚙️ Commands</a>
             <a href="#resources">🗂️ Resources</a>
             <a href="#aap-crs">🎯 AAP Custom Resources</a>
@@ -591,6 +622,28 @@ EOF
     find ${BASE_COLLECTION_PATH}/logs -name "*.log" -type f | sort | while read logfile; do
       filename=$(basename "$logfile")
       echo "                    <li><a href=\"logs/$filename\">$filename</a></li>" >> $INDEX_FILE
+    done
+  fi
+
+  cat >> $INDEX_FILE << 'EOF'
+                </ul>
+            </div>
+        </div>
+
+        <div class="section" id="operator-logs">
+            <h2>🔧 Operator Logs</h2>
+            <p>Logs from AAP operator pods (controller managers):</p>
+            <div class="file-list">
+                <ul>
+EOF
+
+  # Add operator log files to index
+  if [ -d "${BASE_COLLECTION_PATH}/logs" ]; then
+    find ${BASE_COLLECTION_PATH}/logs -name "*operator*.log" -type f | sort | while read logfile; do
+      filename=$(basename "$logfile")
+      # Create a more readable display name
+      display_name=$(echo "$filename" | sed 's/-operator\.log$//' | sed 's/-operator-previous\.log$/ (Previous)/')
+      echo "                    <li><a href=\"logs/$filename\">$display_name</a></li>" >> $INDEX_FILE
     done
   fi
 
