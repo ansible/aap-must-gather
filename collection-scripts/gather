@@ -899,15 +899,47 @@ EOF
       fi
     fi
 
+    # Find pod container and initContainer logs
+    found_container_logs=false
+    if [ -d "${BASE_COLLECTION_PATH}/logs" ]; then
+      # Look for container logs (both regular containers and initContainers)
+      container_logs=$(find ${BASE_COLLECTION_PATH}/logs -name "*.log" -type f | grep -E "(${namespace}|container|init)" | grep -v operator | sort)
+
+      if [ -n "$container_logs" ]; then
+        echo "            <h3>📦 Pod Container Logs</h3>" >> $NAMESPACE_HTML
+        echo "            <p>Logs from pod containers and initContainers in this namespace:</p>" >> $NAMESPACE_HTML
+        echo "            <ul>" >> $NAMESPACE_HTML
+
+        for logfile in $container_logs; do
+          filename=$(basename "$logfile")
+          relative_path=$(echo "$logfile" | sed "s|${BASE_COLLECTION_PATH}/||")
+
+          # Create more descriptive display names for container logs
+          display_name="$filename"
+          if [[ "$filename" == *"init"* ]]; then
+            display_name="🔄 $filename (initContainer)"
+          elif [[ "$filename" == *"container"* ]]; then
+            display_name="📦 $filename (container)"
+          else
+            display_name="📋 $filename"
+          fi
+
+          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          found_container_logs=true
+        done
+        echo "            </ul>" >> $NAMESPACE_HTML
+      fi
+    fi
+
     # Find other application logs related to this namespace
     found_app_logs=false
     if [ -d "${BASE_COLLECTION_PATH}/logs" ]; then
-      # Look for non-operator logs related to this namespace
-      app_logs=$(find ${BASE_COLLECTION_PATH}/logs -name "*${namespace}*" -name "*.log" -type f | grep -v operator | sort)
+      # Look for non-operator, non-container logs related to this namespace
+      app_logs=$(find ${BASE_COLLECTION_PATH}/logs -name "*${namespace}*" -name "*.log" -type f | grep -v operator | grep -v -E "(container|init)" | sort)
 
       if [ -n "$app_logs" ]; then
         echo "            <h3>📋 Application Logs</h3>" >> $NAMESPACE_HTML
-        echo "            <p>Logs from AAP application components:</p>" >> $NAMESPACE_HTML
+        echo "            <p>Other logs from AAP application components:</p>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
 
         for logfile in $app_logs; do
@@ -920,7 +952,7 @@ EOF
       fi
     fi
 
-    if [ "$found_operator_logs" = false ] && [ "$found_app_logs" = false ]; then
+    if [ "$found_operator_logs" = false ] && [ "$found_container_logs" = false ] && [ "$found_app_logs" = false ]; then
       echo "            <p><em>No logs found for this namespace.</em></p>" >> $NAMESPACE_HTML
     fi
 
