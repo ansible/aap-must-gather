@@ -50,7 +50,17 @@ NS=`echo ${ANSIBLENS[@]} | xargs -n1 | sort -u`
 for a in $NS; do
   oc adm inspect ns/"$a"  --dest-dir=must-gather
   oc adm inspect -n $a csv --dest-dir=must-gather
+
+  # Collect pod status for this namespace
+  echo "Collecting pod status for namespace: $a"
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/gather-aap.log
+  echo "NAMESPACE: $a - Pod Status" >> ${BASE_COLLECTION_PATH}/gather-aap.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/gather-aap.log
   oc get pods -n $a >> ${BASE_COLLECTION_PATH}/gather-aap.log
+
+  # Also create a dedicated pod status file for this namespace
+  mkdir -p "${BASE_COLLECTION_PATH}/pod-status"
+  oc get pods -n $a -o wide > "${BASE_COLLECTION_PATH}/pod-status/${a}-pods.log" 2>/dev/null || echo "No pods found in namespace $a" > "${BASE_COLLECTION_PATH}/pod-status/${a}-pods.log"
 
   # Collect PVC status and common resources for each namespace
   echo "Collecting PVC status and common resources for namespace: $a"
@@ -107,7 +117,17 @@ done
 
 for b in $(oc get -A subs --field-selector='metadata.name=ansible-automation-platform-operator' -o custom-columns=NAMESPACE:.metadata.namespace); do
   oc adm inspect ns/"$b" --dest-dir=must-gather
+
+  # Collect pod status for operator namespace
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/gather-aap.log
+  echo "NAMESPACE: $b - Pod Status (Operator)" >> ${BASE_COLLECTION_PATH}/gather-aap.log
+  echo "========================================" >> ${BASE_COLLECTION_PATH}/gather-aap.log
   oc get pods -n $b >> ${BASE_COLLECTION_PATH}/gather-aap.log
+
+  # Create/update dedicated pod status file for this namespace
+  mkdir -p "${BASE_COLLECTION_PATH}/pod-status"
+  oc get pods -n $b -o wide > "${BASE_COLLECTION_PATH}/pod-status/${b}-pods.log" 2>/dev/null || echo "No pods found in namespace $b" > "${BASE_COLLECTION_PATH}/pod-status/${b}-pods.log"
+
   oc adm inspect -n $b subs --dest-dir=must-gather
 done
 
@@ -503,17 +523,121 @@ EOF
   echo "Summary report generated: $SUMMARY_FILE"
 }
 
-# Function to generate index.html
-generate_index_html() {
-  echo "Generating index.html..."
+# Function to extract AAP operator summary information
+extract_aap_operator_summary() {
+  echo "Extracting AAP operator summary information..." >&2
 
-  INDEX_FILE="${BASE_COLLECTION_PATH}/index.html"
+  # Create temporary file for operator summary data
+  TEMP_OPERATOR_SUMMARY=$(mktemp)
 
-  cat > $INDEX_FILE << EOF
+  # Check both possible locations for namespaces directory
+  NAMESPACES_PATH="${BASE_COLLECTION_PATH}/namespaces"
+  if [ ! -d "$NAMESPACES_PATH" ]; then
+    NAMESPACES_PATH="${BASE_COLLECTION_PATH}/must-gather/namespaces"
+  fi
+
+  # Find all namespaces with AAP operator subscriptions
+  for ns_dir in $(find ${NAMESPACES_PATH} -type d -name "operators.coreos.com" 2>/dev/null); do
+    namespace=$(echo "$ns_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
+
+    # Look for AAP operator subscription
+    subscription_file="$ns_dir/subscriptions/ansible-automation-platform-operator.yaml"
+    if [ -f "$subscription_file" ]; then
+      # Extract subscription information
+      channel=$(grep "^  channel:" "$subscription_file" | awk '{print $2}' || echo "Unknown")
+      source=$(grep "^  source:" "$subscription_file" | awk '{print $2}' || echo "Unknown")
+
+      # Determine if cluster-scoped or namespace-scoped based on channel pattern
+      scope="Namespace-scoped"
+      if [[ "$channel" == *"stable"* ]] || [[ "$channel" == *"fast"* ]] || [[ "$channel" == *"candidate"* ]]; then
+        scope="Namespace-scoped"
+      fi
+      # Note: In practice, AAP operator is typically namespace-scoped, but we can extend this logic
+
+      # Get installed CSV version
+      csv_version="Unknown"
+      installed_csv=$(grep "^  installedCSV:" "$subscription_file" | awk '{print $2}' || echo "")
+      if [ -n "$installed_csv" ]; then
+        csv_version=$(echo "$installed_csv" | sed 's/aap-operator\.v//' || echo "Unknown")
+      fi
+
+      # Look for CSV file to get more details
+      csv_file="$ns_dir/clusterserviceversions/$installed_csv.yaml"
+      csv_display_name="AAP Operator"
+      if [ -f "$csv_file" ]; then
+        csv_display_name=$(grep "^    displayName:" "$csv_file" | head -1 | sed 's/^    displayName: //' | tr -d '"' || echo "AAP Operator")
+      fi
+
+      # Count AAP custom resources in this namespace
+      aap_count=0
+      controller_count=0
+      hub_count=0
+      eda_count=0
+      lightspeed_count=0
+
+      # Count different types of AAP resources
+      if [ -d "${NAMESPACES_PATH}/${namespace}/aap.ansible.com/ansibleautomationplatforms" ]; then
+        aap_count=$(find "${NAMESPACES_PATH}/${namespace}/aap.ansible.com/ansibleautomationplatforms" -name "*.yaml" -type f | wc -l)
+      fi
+      if [ -d "${NAMESPACES_PATH}/${namespace}/automationcontroller.ansible.com/automationcontrollers" ]; then
+        controller_count=$(find "${NAMESPACES_PATH}/${namespace}/automationcontroller.ansible.com/automationcontrollers" -name "*.yaml" -type f | wc -l)
+      fi
+      if [ -d "${NAMESPACES_PATH}/${namespace}/automationhub.ansible.com/automationhubs" ]; then
+        hub_count=$(find "${NAMESPACES_PATH}/${namespace}/automationhub.ansible.com/automationhubs" -name "*.yaml" -type f | wc -l)
+      fi
+      if [ -d "${NAMESPACES_PATH}/${namespace}/eda.ansible.com/edas" ]; then
+        eda_count=$(find "${NAMESPACES_PATH}/${namespace}/eda.ansible.com/edas" -name "*.yaml" -type f | wc -l)
+      fi
+      if [ -d "${NAMESPACES_PATH}/${namespace}/lightspeed.ansible.com/ansiblelightspeeds" ]; then
+        lightspeed_count=$(find "${NAMESPACES_PATH}/${namespace}/lightspeed.ansible.com/ansiblelightspeeds" -name "*.yaml" -type f | wc -l)
+      fi
+
+      # Store the summary information
+      echo "$namespace|$channel|$scope|$csv_version|$csv_display_name|$aap_count|$controller_count|$hub_count|$eda_count|$lightspeed_count" >> $TEMP_OPERATOR_SUMMARY
+    fi
+  done
+
+  echo "$TEMP_OPERATOR_SUMMARY"
+}
+
+# Function to generate namespace-specific HTML pages
+generate_namespace_pages() {
+  echo "Generating namespace-specific HTML pages..."
+
+  # Create namespaces directory for HTML pages
+  mkdir -p "${BASE_COLLECTION_PATH}/namespaces-html"
+
+  # Check both possible locations for namespaces directory
+  NAMESPACES_PATH="${BASE_COLLECTION_PATH}/namespaces"
+  if [ ! -d "$NAMESPACES_PATH" ]; then
+    NAMESPACES_PATH="${BASE_COLLECTION_PATH}/must-gather/namespaces"
+  fi
+
+  # Generate a page for each namespace that has AAP resources
+  for ns_dir in $(find ${NAMESPACES_PATH} -maxdepth 1 -type d 2>/dev/null | grep -v "^${NAMESPACES_PATH}$"); do
+    namespace=$(basename "$ns_dir")
+
+    # Skip if this namespace doesn't have any AAP-related resources
+    has_aap_resources=false
+    for aap_resource_dir in aap.ansible.com automationcontroller.ansible.com automationhub.ansible.com eda.ansible.com lightspeed.ansible.com operators.coreos.com; do
+      if [ -d "$ns_dir/$aap_resource_dir" ]; then
+        has_aap_resources=true
+        break
+      fi
+    done
+
+    if [ "$has_aap_resources" = false ]; then
+      continue
+    fi
+
+    # Generate HTML page for this namespace
+    NAMESPACE_HTML="${BASE_COLLECTION_PATH}/namespaces-html/${namespace}.html"
+
+    cat > $NAMESPACE_HTML << EOF
 <!DOCTYPE html>
 <html>
 <head>
-    <title>AAP Must-Gather Index</title>
+    <title>AAP Must-Gather - Namespace: $namespace</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -561,6 +685,341 @@ generate_index_html() {
         a:hover {
             text-decoration: underline;
         }
+        .back-link {
+            background-color: #34495e;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            display: inline-block;
+            margin-bottom: 20px;
+        }
+        .back-link:hover {
+            background-color: #2c3e50;
+            color: white;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="../index.html" class="back-link">← Back to Main Index</a>
+
+        <div class="header">
+            <h1>📁 Namespace: $namespace</h1>
+            <p>Detailed resources and logs for AAP components in this namespace</p>
+        </div>
+EOF
+
+    # Add AAP Custom Resources section
+    echo "        <div class=\"section\">" >> $NAMESPACE_HTML
+    echo "            <h2>🎯 AAP Custom Resources</h2>" >> $NAMESPACE_HTML
+
+    # Check for each type of AAP resource
+    found_resources=false
+
+    # AAP instances
+    if [ -d "$ns_dir/aap.ansible.com/ansibleautomationplatforms" ]; then
+      echo "            <h3>🏢 AnsibleAutomationPlatform</h3>" >> $NAMESPACE_HTML
+      echo "            <ul>" >> $NAMESPACE_HTML
+      for aap_file in $(find "$ns_dir/aap.ansible.com/ansibleautomationplatforms" -name "*.yaml" -type f | sort); do
+        filename=$(basename "$aap_file")
+        relative_path=$(echo "$aap_file" | sed "s|${BASE_COLLECTION_PATH}/||")
+        echo "                <li><a href=\"../$relative_path\">$filename</a></li>" >> $NAMESPACE_HTML
+        found_resources=true
+      done
+      echo "            </ul>" >> $NAMESPACE_HTML
+    fi
+
+    # AutomationController instances
+    if [ -d "$ns_dir/automationcontroller.ansible.com/automationcontrollers" ]; then
+      echo "            <h3>🎮 AutomationController</h3>" >> $NAMESPACE_HTML
+      echo "            <ul>" >> $NAMESPACE_HTML
+      for ac_file in $(find "$ns_dir/automationcontroller.ansible.com/automationcontrollers" -name "*.yaml" -type f | sort); do
+        filename=$(basename "$ac_file")
+        relative_path=$(echo "$ac_file" | sed "s|${BASE_COLLECTION_PATH}/||")
+        echo "                <li><a href=\"../$relative_path\">$filename</a></li>" >> $NAMESPACE_HTML
+        found_resources=true
+      done
+      echo "            </ul>" >> $NAMESPACE_HTML
+    fi
+
+    # AutomationHub instances
+    if [ -d "$ns_dir/automationhub.ansible.com/automationhubs" ]; then
+      echo "            <h3>📦 AutomationHub</h3>" >> $NAMESPACE_HTML
+      echo "            <ul>" >> $NAMESPACE_HTML
+      for ah_file in $(find "$ns_dir/automationhub.ansible.com/automationhubs" -name "*.yaml" -type f | sort); do
+        filename=$(basename "$ah_file")
+        relative_path=$(echo "$ah_file" | sed "s|${BASE_COLLECTION_PATH}/||")
+        echo "                <li><a href=\"../$relative_path\">$filename</a></li>" >> $NAMESPACE_HTML
+        found_resources=true
+      done
+      echo "            </ul>" >> $NAMESPACE_HTML
+    fi
+
+    # EDA instances
+    if [ -d "$ns_dir/eda.ansible.com/edas" ]; then
+      echo "            <h3>⚡ EDA</h3>" >> $NAMESPACE_HTML
+      echo "            <ul>" >> $NAMESPACE_HTML
+      for eda_file in $(find "$ns_dir/eda.ansible.com/edas" -name "*.yaml" -type f | sort); do
+        filename=$(basename "$eda_file")
+        relative_path=$(echo "$eda_file" | sed "s|${BASE_COLLECTION_PATH}/||")
+        echo "                <li><a href=\"../$relative_path\">$filename</a></li>" >> $NAMESPACE_HTML
+        found_resources=true
+      done
+      echo "            </ul>" >> $NAMESPACE_HTML
+    fi
+
+    # AnsibleLightspeed instances
+    if [ -d "$ns_dir/lightspeed.ansible.com/ansiblelightspeeds" ]; then
+      echo "            <h3>💡 AnsibleLightspeed</h3>" >> $NAMESPACE_HTML
+      echo "            <ul>" >> $NAMESPACE_HTML
+      for als_file in $(find "$ns_dir/lightspeed.ansible.com/ansiblelightspeeds" -name "*.yaml" -type f | sort); do
+        filename=$(basename "$als_file")
+        relative_path=$(echo "$als_file" | sed "s|${BASE_COLLECTION_PATH}/||")
+        echo "                <li><a href=\"../$relative_path\">$filename</a></li>" >> $NAMESPACE_HTML
+        found_resources=true
+      done
+      echo "            </ul>" >> $NAMESPACE_HTML
+    fi
+
+    if [ "$found_resources" = false ]; then
+      echo "            <p><em>No AAP custom resources found in this namespace.</em></p>" >> $NAMESPACE_HTML
+    fi
+
+    echo "        </div>" >> $NAMESPACE_HTML
+
+    # Add Operator Information section
+    echo "        <div class=\"section\">" >> $NAMESPACE_HTML
+    echo "            <h2>🔧 Operator Information</h2>" >> $NAMESPACE_HTML
+
+    # Check for subscription information
+    subscription_file="$ns_dir/operators.coreos.com/subscriptions/ansible-automation-platform-operator.yaml"
+    if [ -f "$subscription_file" ]; then
+      channel=$(grep "^  channel:" "$subscription_file" | awk '{print $2}' || echo "Unknown")
+      source=$(grep "^  source:" "$subscription_file" | awk '{print $2}' || echo "Unknown")
+      installed_csv=$(grep "^  installedCSV:" "$subscription_file" | awk '{print $2}' || echo "Unknown")
+
+      echo "            <table>" >> $NAMESPACE_HTML
+      echo "                <tr><th>Property</th><th>Value</th></tr>" >> $NAMESPACE_HTML
+      echo "                <tr><td>Channel</td><td>$channel</td></tr>" >> $NAMESPACE_HTML
+      echo "                <tr><td>Source</td><td>$source</td></tr>" >> $NAMESPACE_HTML
+      echo "                <tr><td>Installed CSV</td><td>$installed_csv</td></tr>" >> $NAMESPACE_HTML
+      echo "            </table>" >> $NAMESPACE_HTML
+
+      relative_sub_path=$(echo "$subscription_file" | sed "s|${BASE_COLLECTION_PATH}/||")
+      echo "            <p><a href=\"../$relative_sub_path\">📄 View Subscription Details</a></p>" >> $NAMESPACE_HTML
+    else
+      echo "            <p><em>No AAP operator subscription found in this namespace.</em></p>" >> $NAMESPACE_HTML
+    fi
+
+    echo "        </div>" >> $NAMESPACE_HTML
+
+    # Add Pod Status section
+    echo "        <div class=\"section\">" >> $NAMESPACE_HTML
+    echo "            <h2>🚀 Pod Status</h2>" >> $NAMESPACE_HTML
+    echo "            <p>Current status of all pods in this namespace (useful for identifying crashing pods):</p>" >> $NAMESPACE_HTML
+
+    # Check for dedicated pod status file
+    pod_status_file="${BASE_COLLECTION_PATH}/pod-status/${namespace}-pods.log"
+    pod_info_found=false
+
+    if [ -f "$pod_status_file" ]; then
+      echo "            <h3>Pod Status Summary</h3>" >> $NAMESPACE_HTML
+      echo "            <pre style=\"background-color: #f8f9fa; padding: 10px; border-radius: 4px; overflow-x: auto; font-family: 'Courier New', monospace; font-size: 12px; white-space: pre;\">" >> $NAMESPACE_HTML
+
+      # Read the pod status file and display it with proper column alignment
+      pod_content=$(cat "$pod_status_file" 2>/dev/null)
+      if [ -n "$pod_content" ] && [ "$pod_content" != "No pods found in namespace $namespace" ]; then
+        # Use column command to align the output properly
+        echo "$pod_content" | column -t >> $NAMESPACE_HTML
+        pod_info_found=true
+      else
+        echo "No pods found in namespace: $namespace" >> $NAMESPACE_HTML
+      fi
+
+      echo "            </pre>" >> $NAMESPACE_HTML
+
+      # Add link to the raw pod status file
+      relative_pod_path=$(echo "$pod_status_file" | sed "s|${BASE_COLLECTION_PATH}/||")
+      echo "            <p><a href=\"../$relative_pod_path\">📄 View raw pod status file</a></p>" >> $NAMESPACE_HTML
+    fi
+
+    if [ "$pod_info_found" = false ]; then
+      echo "            <p><em>No pod information found for this namespace in the collected data.</em></p>" >> $NAMESPACE_HTML
+      echo "            <p><strong>Note:</strong> To see current pod status, run: <code>oc get pods -n $namespace</code></p>" >> $NAMESPACE_HTML
+    fi
+
+    echo "        </div>" >> $NAMESPACE_HTML
+
+    # Add Logs section
+    echo "        <div class=\"section\">" >> $NAMESPACE_HTML
+    echo "            <h2>📋 Logs</h2>" >> $NAMESPACE_HTML
+
+    # Find operator logs first (these are most important for troubleshooting)
+    found_operator_logs=false
+    if [ -d "${BASE_COLLECTION_PATH}/logs" ]; then
+      # Look for operator pod logs in this namespace
+      operator_logs=$(find ${BASE_COLLECTION_PATH}/logs -name "*operator*" -name "*.log" -type f | grep -E "(${namespace}|operator)" | sort)
+
+      if [ -n "$operator_logs" ]; then
+        echo "            <h3>🔧 Operator Pod Logs</h3>" >> $NAMESPACE_HTML
+        echo "            <p>Latest logs from AAP operator pods (most useful for troubleshooting operator issues):</p>" >> $NAMESPACE_HTML
+        echo "            <ul>" >> $NAMESPACE_HTML
+
+        for logfile in $operator_logs; do
+          filename=$(basename "$logfile")
+          relative_path=$(echo "$logfile" | sed "s|${BASE_COLLECTION_PATH}/||")
+
+          # Create a more readable display name for operator logs
+          display_name="$filename"
+          if [[ "$filename" == *"operator-controller-manager"* ]]; then
+            if [[ "$filename" == *"previous"* ]]; then
+              display_name="🔄 $(echo "$filename" | sed 's/-operator.*/ (Previous Log)/')"
+            else
+              display_name="📋 $(echo "$filename" | sed 's/-operator.*/ (Current Log)/')"
+            fi
+          fi
+
+          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          found_operator_logs=true
+        done
+        echo "            </ul>" >> $NAMESPACE_HTML
+      fi
+    fi
+
+    # Find other application logs related to this namespace
+    found_app_logs=false
+    if [ -d "${BASE_COLLECTION_PATH}/logs" ]; then
+      # Look for non-operator logs related to this namespace
+      app_logs=$(find ${BASE_COLLECTION_PATH}/logs -name "*${namespace}*" -name "*.log" -type f | grep -v operator | sort)
+
+      if [ -n "$app_logs" ]; then
+        echo "            <h3>📋 Application Logs</h3>" >> $NAMESPACE_HTML
+        echo "            <p>Logs from AAP application components:</p>" >> $NAMESPACE_HTML
+        echo "            <ul>" >> $NAMESPACE_HTML
+
+        for logfile in $app_logs; do
+          filename=$(basename "$logfile")
+          relative_path=$(echo "$logfile" | sed "s|${BASE_COLLECTION_PATH}/||")
+          echo "                <li><a href=\"../$relative_path\">$filename</a></li>" >> $NAMESPACE_HTML
+          found_app_logs=true
+        done
+        echo "            </ul>" >> $NAMESPACE_HTML
+      fi
+    fi
+
+    if [ "$found_operator_logs" = false ] && [ "$found_app_logs" = false ]; then
+      echo "            <p><em>No logs found for this namespace.</em></p>" >> $NAMESPACE_HTML
+    fi
+
+    echo "        </div>" >> $NAMESPACE_HTML
+
+    # Add Commands section
+    echo "        <div class=\"section\">" >> $NAMESPACE_HTML
+    echo "            <h2>⚙️ Command Outputs</h2>" >> $NAMESPACE_HTML
+
+    # Find command outputs related to this namespace
+    found_commands=false
+    if [ -d "${BASE_COLLECTION_PATH}/commands" ]; then
+      echo "            <ul>" >> $NAMESPACE_HTML
+      for cmdfile in $(find ${BASE_COLLECTION_PATH}/commands -name "*${namespace}*" -name "*.log" -type f | sort); do
+        filename=$(basename "$cmdfile")
+        relative_path=$(echo "$cmdfile" | sed "s|${BASE_COLLECTION_PATH}/||")
+        echo "                <li><a href=\"../$relative_path\">$filename</a></li>" >> $NAMESPACE_HTML
+        found_commands=true
+      done
+      echo "            </ul>" >> $NAMESPACE_HTML
+    fi
+
+    if [ "$found_commands" = false ]; then
+      echo "            <p><em>No command outputs found for this namespace.</em></p>" >> $NAMESPACE_HTML
+    fi
+
+    echo "        </div>" >> $NAMESPACE_HTML
+
+    # Add Raw Resources section
+    echo "        <div class=\"section\">" >> $NAMESPACE_HTML
+    echo "            <h2>🗂️ All Kubernetes Resources</h2>" >> $NAMESPACE_HTML
+    echo "            <p>Complete resource dumps for this namespace:</p>" >> $NAMESPACE_HTML
+
+    relative_ns_path=$(echo "$ns_dir" | sed "s|${BASE_COLLECTION_PATH}/||")
+    echo "            <p><a href=\"../$relative_ns_path/\">📂 Browse All Resources for $namespace</a></p>" >> $NAMESPACE_HTML
+
+    echo "        </div>" >> $NAMESPACE_HTML
+
+    # Close the HTML
+    cat >> $NAMESPACE_HTML << 'EOF'
+    </div>
+</body>
+</html>
+EOF
+
+    echo "Generated namespace page: $NAMESPACE_HTML"
+  done
+}
+
+# Function to generate index.html
+generate_index_html() {
+  echo "Generating index.html..."
+
+  INDEX_FILE="${BASE_COLLECTION_PATH}/index.html"
+
+  cat > $INDEX_FILE << EOF
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AAP Must-Gather Summary</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            color: #333;
+            border-bottom: 2px solid #e74c3c;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #fafafa;
+        }
+        .section h2 {
+            color: #2c3e50;
+            margin-top: 0;
+        }
+        a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
         .important {
             background-color: #fff3cd;
             border-color: #ffeaa7;
@@ -581,28 +1040,45 @@ generate_index_html() {
         .nav-menu a:hover {
             background-color: #2c3e50;
         }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .namespace-scoped {
+            background-color: #e8f5e8;
+        }
+        .cluster-scoped {
+            background-color: #e8f0ff;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔧 AAP Must-Gather Collection</h1>
-            <p>Comprehensive debugging information for Ansible Automation Platform</p>
+            <h1>🔧 AAP Must-Gather Summary</h1>
+            <p>Overview of Ansible Automation Platform installations and resources</p>
             <p><em>Generated on: $(date)</em></p>
         </div>
 
         <div class="nav-menu">
-            <a href="#summary">📊 Summary Report</a>
-            <a href="#logs">📋 Logs</a>
-            <a href="#operator-logs">🔧 Operator Logs</a>
-            <a href="#commands">⚙️ Commands</a>
+            <a href="#aap-summary">🎯 AAP Installations</a>
+            <a href="#namespaces">📁 Namespace Details</a>
+            <a href="#summary">📊 Reports</a>
             <a href="#resources">🗂️ Resources</a>
-            <a href="#aap-crs">🎯 AAP Custom Resources</a>
             <a href="#cluster">🏗️ Cluster Info</a>
         </div>
 
         <div class="section important" id="summary">
-            <h2>📊 Summary Report</h2>
+            <h2>📊 Summary Reports</h2>
             <p>Start here for a high-level overview of your AAP deployment:</p>
             <ul>
                 <li><a href="reports/summary-report.html"><strong>📈 Comprehensive Summary Report</strong></a> - Version info, error analysis, and key findings</li>
@@ -610,66 +1086,86 @@ generate_index_html() {
             </ul>
         </div>
 
-        <div class="section" id="logs">
-            <h2>📋 Application Logs</h2>
-            <p>Container and initContainer logs from AAP components:</p>
-            <div class="file-list">
-                <ul>
+        <div class="section" id="aap-summary">
+            <h2>🎯 AAP Operator Installations</h2>
+            <p>Summary of AAP operator installations and their versions per namespace:</p>
 EOF
 
-  # Add log files to index
-  if [ -d "${BASE_COLLECTION_PATH}/logs" ]; then
-    find ${BASE_COLLECTION_PATH}/logs -name "*.log" -type f | sort | while read logfile; do
-      filename=$(basename "$logfile")
-      echo "                    <li><a href=\"logs/$filename\">$filename</a></li>" >> $INDEX_FILE
-    done
+  # Get operator summary information
+  OPERATOR_SUMMARY_FILE=$(extract_aap_operator_summary)
+
+  if [ -f "$OPERATOR_SUMMARY_FILE" ] && [ -s "$OPERATOR_SUMMARY_FILE" ]; then
+    cat >> $INDEX_FILE << 'EOF'
+            <table>
+                <tr>
+                    <th>Namespace</th>
+                    <th>Channel</th>
+                    <th>Scope</th>
+                    <th>Version</th>
+                    <th>AAP</th>
+                    <th>Controller</th>
+                    <th>Hub</th>
+                    <th>EDA</th>
+                    <th>Lightspeed</th>
+                </tr>
+EOF
+
+    # Process each operator installation
+    while IFS='|' read namespace channel scope csv_version csv_display_name aap_count controller_count hub_count eda_count lightspeed_count; do
+      scope_class=""
+      if [ "$scope" = "Cluster-scoped" ]; then
+        scope_class="cluster-scoped"
+      else
+        scope_class="namespace-scoped"
+      fi
+
+      echo "                <tr class=\"$scope_class\">" >> $INDEX_FILE
+      echo "                    <td><strong>$namespace</strong></td>" >> $INDEX_FILE
+      echo "                    <td>$channel</td>" >> $INDEX_FILE
+      echo "                    <td>$scope</td>" >> $INDEX_FILE
+      echo "                    <td>$csv_version</td>" >> $INDEX_FILE
+      echo "                    <td>$aap_count</td>" >> $INDEX_FILE
+      echo "                    <td>$controller_count</td>" >> $INDEX_FILE
+      echo "                    <td>$hub_count</td>" >> $INDEX_FILE
+      echo "                    <td>$eda_count</td>" >> $INDEX_FILE
+      echo "                    <td>$lightspeed_count</td>" >> $INDEX_FILE
+      echo "                </tr>" >> $INDEX_FILE
+    done < "$OPERATOR_SUMMARY_FILE"
+
+    cat >> $INDEX_FILE << 'EOF'
+            </table>
+            <p><em>Scope is determined by the operator channel. Numbers indicate count of custom resources of each type.</em></p>
+EOF
+  else
+    cat >> $INDEX_FILE << 'EOF'
+            <p><em>No AAP operator installations found in the collected data.</em></p>
+EOF
   fi
 
+  # Clean up temporary file
+  rm -f "$OPERATOR_SUMMARY_FILE"
+
   cat >> $INDEX_FILE << 'EOF'
-                </ul>
-            </div>
         </div>
 
-        <div class="section" id="operator-logs">
-            <h2>🔧 Operator Logs</h2>
-            <p>Logs from AAP operator pods (controller managers):</p>
-            <div class="file-list">
-                <ul>
+        <div class="section" id="namespaces">
+            <h2>📁 Namespace Details</h2>
+            <p>Detailed information for each namespace with AAP components:</p>
+            <ul>
 EOF
 
-  # Add operator log files to index
-  if [ -d "${BASE_COLLECTION_PATH}/logs" ]; then
-    find ${BASE_COLLECTION_PATH}/logs -name "*operator*.log" -type f | sort | while read logfile; do
-      filename=$(basename "$logfile")
-      # Create a more readable display name
-      display_name=$(echo "$filename" | sed 's/-operator\.log$//' | sed 's/-operator-previous\.log$/ (Previous)/')
-      echo "                    <li><a href=\"logs/$filename\">$display_name</a></li>" >> $INDEX_FILE
+  # Add links to namespace-specific pages
+  if [ -d "${BASE_COLLECTION_PATH}/namespaces-html" ]; then
+    for namespace_html in $(find ${BASE_COLLECTION_PATH}/namespaces-html -name "*.html" -type f | sort); do
+      namespace=$(basename "$namespace_html" .html)
+      echo "                <li><a href=\"namespaces-html/$namespace.html\">📁 $namespace</a> - Complete resources and logs for this namespace</li>" >> $INDEX_FILE
     done
+  else
+    echo "                <li><em>No namespace detail pages generated.</em></li>" >> $INDEX_FILE
   fi
 
   cat >> $INDEX_FILE << 'EOF'
-                </ul>
-            </div>
-        </div>
-
-        <div class="section" id="commands">
-            <h2>⚙️ Command Outputs</h2>
-            <p>Output from management commands (showmigrations, etc.):</p>
-            <div class="file-list">
-                <ul>
-EOF
-
-  # Add command output files to index
-  if [ -d "${BASE_COLLECTION_PATH}/commands" ]; then
-    find ${BASE_COLLECTION_PATH}/commands -name "*.log" -type f | sort | while read cmdfile; do
-      filename=$(basename "$cmdfile")
-      echo "                    <li><a href=\"commands/$filename\">$filename</a></li>" >> $INDEX_FILE
-    done
-  fi
-
-  cat >> $INDEX_FILE << 'EOF'
-                </ul>
-            </div>
+            </ul>
         </div>
 
         <div class="section" id="resources">
@@ -694,104 +1190,6 @@ EOF
                 <li><a href="master_dmesg.log">🖥️ Master Node Messages</a></li>
                 <li><a href="worker_dmesg.log">⚙️ Worker Node Messages</a></li>
             </ul>
-        </div>
-
-        <div class="section" id="aap-crs">
-            <h2>🎯 AAP Custom Resources</h2>
-            <p>Ansible Automation Platform custom resource instances grouped by namespace:</p>
-            <div class="file-list">
-                <ul>
-EOF
-
-  # Create a temporary file to collect all AAP custom resources by namespace
-  TEMP_CR_FILE=$(mktemp)
-
-  # Find all AAP custom resource instances and organize by namespace
-  # Check both possible locations for namespaces directory
-  NAMESPACES_PATH="${BASE_COLLECTION_PATH}/namespaces"
-  if [ ! -d "$NAMESPACES_PATH" ]; then
-    NAMESPACES_PATH="${BASE_COLLECTION_PATH}/must-gather/namespaces"
-  fi
-  # AAP instances
-  for aap_dir in $(find ${NAMESPACES_PATH} -name "ansibleautomationplatforms" -type d 2>/dev/null); do
-    for aap_file in $(find "$aap_dir" -name "*.yaml" -type f | sort); do
-      filename=$(basename "$aap_file")
-      namespace=$(echo "$aap_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
-      relative_path=$(echo "$aap_file" | sed "s|${BASE_COLLECTION_PATH}/||")
-      echo "$namespace|🏢|AAP|$relative_path|$filename" >> $TEMP_CR_FILE
-    done
-  done
-
-  # AutomationController instances
-  for ac_dir in $(find ${NAMESPACES_PATH} -name "automationcontrollers" -type d 2>/dev/null); do
-    for ac_file in $(find "$ac_dir" -name "*.yaml" -type f | sort); do
-      filename=$(basename "$ac_file")
-      namespace=$(echo "$ac_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
-      relative_path=$(echo "$ac_file" | sed "s|${BASE_COLLECTION_PATH}/||")
-      echo "$namespace|🎮|AutomationController|$relative_path|$filename" >> $TEMP_CR_FILE
-    done
-  done
-
-  # AutomationHub instances
-  for ah_dir in $(find ${NAMESPACES_PATH} -name "automationhubs" -type d 2>/dev/null); do
-    for ah_file in $(find "$ah_dir" -name "*.yaml" -type f | sort); do
-      filename=$(basename "$ah_file")
-      namespace=$(echo "$ah_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
-      relative_path=$(echo "$ah_file" | sed "s|${BASE_COLLECTION_PATH}/||")
-      echo "$namespace|📦|AutomationHub|$relative_path|$filename" >> $TEMP_CR_FILE
-    done
-  done
-
-  # EDA instances
-  for eda_dir in $(find ${NAMESPACES_PATH} -name "edas" -type d 2>/dev/null); do
-    for eda_file in $(find "$eda_dir" -name "*.yaml" -type f | sort); do
-      filename=$(basename "$eda_file")
-      namespace=$(echo "$eda_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
-      relative_path=$(echo "$eda_file" | sed "s|${BASE_COLLECTION_PATH}/||")
-      echo "$namespace|⚡|EDA|$relative_path|$filename" >> $TEMP_CR_FILE
-    done
-  done
-
-  # AnsibleLightspeed instances
-  for als_dir in $(find ${NAMESPACES_PATH} -name "ansiblelightspeeds" -type d 2>/dev/null); do
-    for als_file in $(find "$als_dir" -name "*.yaml" -type f | sort); do
-      filename=$(basename "$als_file")
-      namespace=$(echo "$als_dir" | sed 's|.*/namespaces/||' | sed 's|/.*||')
-      relative_path=$(echo "$als_file" | sed "s|${BASE_COLLECTION_PATH}/||")
-      echo "$namespace|💡|AnsibleLightspeed|$relative_path|$filename" >> $TEMP_CR_FILE
-    done
-  done
-
-  # Sort by namespace and generate the HTML
-  if [ -f "$TEMP_CR_FILE" ] && [ -s "$TEMP_CR_FILE" ]; then
-    sort "$TEMP_CR_FILE" | while IFS='|' read namespace icon type path filename; do
-      # Check if this is a new namespace
-      if [ "$namespace" != "$prev_namespace" ]; then
-        if [ -n "$prev_namespace" ]; then
-          echo "                    </ul>" >> $INDEX_FILE
-          echo "                    </li>" >> $INDEX_FILE
-        fi
-        echo "                    <li><strong>📁 Namespace: $namespace</strong>" >> $INDEX_FILE
-        echo "                    <ul style=\"margin-left: 20px;\">" >> $INDEX_FILE
-        prev_namespace="$namespace"
-      fi
-      echo "                        <li><a href=\"$path\">$icon $type: $filename</a></li>" >> $INDEX_FILE
-    done
-    # Close the last namespace
-    if [ -n "$prev_namespace" ]; then
-      echo "                    </ul>" >> $INDEX_FILE
-      echo "                    </li>" >> $INDEX_FILE
-    fi
-  else
-    echo "                    <li><em>No AAP custom resources found in the collected data.</em></li>" >> $INDEX_FILE
-  fi
-
-  # Clean up temporary file
-  rm -f "$TEMP_CR_FILE"
-
-  cat >> $INDEX_FILE << 'EOF'
-                </ul>
-            </div>
         </div>
 
         <div class="section">
@@ -832,9 +1230,9 @@ EOF
         <div class="section">
             <h2>ℹ️ How to Use This Must-Gather</h2>
             <ol>
-                <li><strong>Start with the Summary Report</strong> - Review the comprehensive summary for key findings</li>
-                <li><strong>Check Error Analysis</strong> - Look at the error summary for immediate issues</li>
-                <li><strong>Review Application Logs</strong> - Examine specific component logs for detailed troubleshooting</li>
+                <li><strong>Review AAP Installations</strong> - Check the operator summary table for version and scope information</li>
+                <li><strong>Explore Namespace Details</strong> - Click on namespace links for detailed resources and logs</li>
+                <li><strong>Check Summary Reports</strong> - Review comprehensive analysis and error summaries</li>
                 <li><strong>Analyze Resource Status</strong> - Check PVC, deployment, and service status</li>
                 <li><strong>Deep Dive</strong> - Use the raw namespace data for detailed investigation</li>
             </ol>
@@ -861,6 +1259,7 @@ EOF
 # Generate the summary report and index
 echo "Generating enhanced reports..."
 generate_summary_report || echo "Failed to generate summary report"
+generate_namespace_pages || echo "Failed to generate namespace pages"
 generate_index_html || echo "Failed to generate index.html"
 
 echo "Must-gather collection completed successfully!"
@@ -870,6 +1269,9 @@ echo "- migration job logs collection"
 echo "- showmigrations output capture"
 echo "- PVC status and common resources"
 echo "- Error analysis and summary report"
-echo "- Interactive index.html for easy navigation"
+echo "- AAP operator installation summary"
+echo "- Namespace-specific detail pages"
+echo "- Restructured index.html for easy navigation"
 echo ""
-echo "Open index.html in a web browser to navigate the collected data."
+echo "Open index.html in a web browser to view the AAP installation summary."
+echo "Click on namespace links for detailed resources and logs per namespace."
