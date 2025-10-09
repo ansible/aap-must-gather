@@ -235,45 +235,184 @@ collect_operator_logs() {
   done
 }
 
-# Function to collect showmigrations output
-collect_showmigrations() {
+# Function to collect configuration files from key containers
+collect_config_files() {
   local namespace=$1
-  echo "Collecting showmigrations output for namespace: $namespace"
+  echo "Collecting configuration files from key containers for namespace: $namespace"
+
+  # Create config directory
+  mkdir -p "${BASE_COLLECTION_PATH}/configs"
+
+  # Gateway-api pods - collect proxy.yml, nginx.conf, redis.conf
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=aap-gateway -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    echo "Collecting config files from gateway pod: $pod"
+
+    # Collect proxy.yml from api container
+    oc exec $pod -n $namespace -c api -- cat /etc/ansible-automation-platform/gateway/proxy.yml > "${BASE_COLLECTION_PATH}/configs/${pod}-api-proxy.yml" 2>/dev/null || echo "Failed to collect proxy.yml from gateway $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # Collect nginx.conf from proxy container
+    oc exec $pod -n $namespace -c proxy -- cat /etc/nginx/nginx.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-proxy-nginx.conf" 2>/dev/null || echo "Failed to collect nginx.conf from gateway $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # Collect redis.conf if redis container exists
+    oc exec $pod -n $namespace -c redis -- cat /etc/redis/redis.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-redis.conf" 2>/dev/null || echo "No redis container or redis.conf in gateway $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+  done
+
+  # Controller-web pods - collect receptor.conf, redis.conf, nginx.conf, supervisord.conf, tower_settings.py
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=automationcontroller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    # Check if this is a web pod (not task pod)
+    if [[ "$pod" == *"web"* ]]; then
+      echo "Collecting config files from controller web pod: $pod"
+
+      # Collect receptor.conf
+      oc exec $pod -n $namespace -c myaap-controller-web -- cat /etc/receptor/receptor.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-web-receptor.conf" 2>/dev/null || echo "Failed to collect receptor.conf from controller web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+      # Collect redis.conf from redis container
+      oc exec $pod -n $namespace -c redis -- cat /etc/redis/redis.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-web-redis.conf" 2>/dev/null || echo "Failed to collect redis.conf from controller web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+      # Collect nginx.conf
+      oc exec $pod -n $namespace -c myaap-controller-web -- cat /etc/nginx/nginx.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-web-nginx.conf" 2>/dev/null || echo "Failed to collect nginx.conf from controller web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+      # Collect supervisord.conf
+      oc exec $pod -n $namespace -c myaap-controller-web -- cat /etc/supervisord.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-web-supervisord.conf" 2>/dev/null || echo "Failed to collect supervisord.conf from controller web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+      # Collect tower_settings.py
+      oc exec $pod -n $namespace -c myaap-controller-web -- cat /etc/tower/settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-web-tower_settings.py" 2>/dev/null || \
+      oc exec $pod -n $namespace -c myaap-controller-web -- cat /etc/tower/tower_settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-web-tower_settings.py" 2>/dev/null || \
+      echo "Failed to collect tower_settings.py from controller web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    fi
+  done
+
+  # Controller-task pods - collect receptor.conf, redis.conf, supervisord.conf, tower_settings.py
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=task -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    echo "Collecting config files from controller task pod: $pod"
+
+    # Collect receptor.conf
+    oc exec $pod -n $namespace -c automation-controller-task -- cat /etc/receptor/receptor.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-task-receptor.conf" 2>/dev/null || echo "Failed to collect receptor.conf from controller task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # Collect redis.conf from redis container
+    oc exec $pod -n $namespace -c redis -- cat /etc/redis/redis.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-task-redis.conf" 2>/dev/null || echo "Failed to collect redis.conf from controller task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # Collect supervisord.conf
+    oc exec $pod -n $namespace -c automation-controller-task -- cat /etc/supervisord.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-task-supervisord.conf" 2>/dev/null || echo "Failed to collect supervisord.conf from controller task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # Collect tower_settings.py
+    oc exec $pod -n $namespace -c automation-controller-task -- cat /etc/tower/settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-task-tower_settings.py" 2>/dev/null || \
+    oc exec $pod -n $namespace -c automation-controller-task -- cat /etc/tower/tower_settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-task-tower_settings.py" 2>/dev/null || \
+    echo "Failed to collect tower_settings.py from controller task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+  done
+
+  # Hub API pods - collect nginx.conf, redis.conf, pulp settings
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/name=automationhub-api -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    echo "Collecting config files from hub API pod: $pod"
+
+    # Collect nginx.conf
+    oc exec $pod -n $namespace -c api -- cat /etc/nginx/nginx.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-api-nginx.conf" 2>/dev/null || echo "Failed to collect nginx.conf from hub API $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # Collect pulp settings
+    oc exec $pod -n $namespace -c api -- cat /etc/pulp/settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-api-pulp_settings.py" 2>/dev/null || echo "Failed to collect pulp settings from hub API $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+  done
+
+  # EDA API pods - collect nginx.conf, redis.conf, eda settings
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=eda-api -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    echo "Collecting config files from EDA API pod: $pod"
+
+    # Collect nginx.conf
+    oc exec $pod -n $namespace -c nginx -- cat /etc/nginx/nginx.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-api-nginx.conf" 2>/dev/null || echo "Failed to collect nginx.conf from EDA API $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # Collect EDA settings
+    oc exec $pod -n $namespace -c eda-api -- cat /etc/eda/settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-api-eda_settings.py" 2>/dev/null || echo "Failed to collect EDA settings from EDA API $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+  done
+
+  # Redis standalone pods - collect redis.conf
+  for pod in $(oc get pods -n $namespace -l app.kubernetes.io/name=redis -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    echo "Collecting config files from Redis pod: $pod"
+
+    # Collect redis.conf
+    oc exec $pod -n $namespace -c redis -- cat /etc/redis/redis.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-redis.conf" 2>/dev/null || echo "Failed to collect redis.conf from Redis $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+  done
+}
+
+# Function to collect comprehensive management commands output
+collect_management_commands() {
+  local namespace=$1
+  echo "Collecting management commands output for namespace: $namespace"
 
   # Collect from automation controller task pods
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=task -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-    echo "Collecting showmigrations from controller task pod: $pod"
+    echo "Collecting management commands from controller task pod: $pod"
+
+    # showmigrations
     oc exec $pod -n $namespace -c automation-controller-task -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # version info
+    oc exec $pod -n $namespace -c automation-controller-task -- awx-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-version.log" 2>/dev/null || echo "Failed to collect version from task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # check database connectivity
+    oc exec $pod -n $namespace -c automation-controller-task -- awx-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # Note: list_settings command removed to avoid exposing sensitive configuration data
   done
 
   # Collect from automation controller web pods
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=automationcontroller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     # Check if this is a web pod (not task pod)
     if [[ "$pod" == *"web"* ]]; then
-      echo "Collecting showmigrations from controller web pod: $pod"
+      echo "Collecting management commands from controller web pod: $pod"
+
+      # showmigrations
       oc exec $pod -n $namespace -c myaap-controller-web -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+      # version info
+      oc exec $pod -n $namespace -c myaap-controller-web -- awx-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-version.log" 2>/dev/null || echo "Failed to collect version from web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
     fi
   done
 
   # Collect from gateway pods
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=aap-gateway -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-    echo "Collecting showmigrations from gateway pod: $pod"
+    echo "Collecting management commands from gateway pod: $pod"
+
+    # showmigrations
     oc exec $pod -n $namespace -c api -- aap-gateway-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-gateway-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from gateway $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # version info
+    oc exec $pod -n $namespace -c api -- aap-gateway-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-gateway-version.log" 2>/dev/null || echo "Failed to collect version from gateway $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # check database connectivity
+    oc exec $pod -n $namespace -c api -- aap-gateway-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-gateway-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from gateway $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 
   # Collect from automation hub API pods
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/name=automationhub-api -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-    echo "Collecting showmigrations from hub API pod: $pod"
-    # Try multiple possible management commands for hub
+    echo "Collecting management commands from hub API pod: $pod"
+
+    # showmigrations
     oc exec $pod -n $namespace -c api -- pulpcore-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-showmigrations.log" 2>/dev/null || \
     oc exec $pod -n $namespace -c api -- python -m pulpcore.app.manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-showmigrations.log" 2>/dev/null || \
     echo "Failed to collect showmigrations from hub $pod - management command not available" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # status check
+    oc exec $pod -n $namespace -c api -- pulpcore-manage status > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-status.log" 2>/dev/null || \
+    oc exec $pod -n $namespace -c api -- python -m pulpcore.app.manage status > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-status.log" 2>/dev/null || \
+    echo "Failed to collect status from hub $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # version info
+    oc exec $pod -n $namespace -c api -- pulpcore-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-version.log" 2>/dev/null || \
+    oc exec $pod -n $namespace -c api -- python -m pulpcore.app.manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-version.log" 2>/dev/null || \
+    echo "Failed to collect version from hub $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 
   # Collect from EDA pods
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=eda-api -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-    echo "Collecting showmigrations from EDA pod: $pod"
+    echo "Collecting management commands from EDA pod: $pod"
+
+    # showmigrations
     oc exec $pod -n $namespace -c eda-api -- aap-eda-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from EDA $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # version info
+    oc exec $pod -n $namespace -c eda-api -- aap-eda-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-version.log" 2>/dev/null || echo "Failed to collect version from EDA $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # check database connectivity
+    oc exec $pod -n $namespace -c eda-api -- aap-eda-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from EDA $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 }
 
@@ -285,7 +424,8 @@ if [ ! -z "$NS" ]; then
     collect_init_container_logs $a || echo "Failed to collect init container logs for $a"
     collect_migration_job_logs $a || echo "Failed to collect migration job logs for $a"
     collect_operator_logs $a || echo "Failed to collect operator logs for $a"
-    collect_showmigrations $a || echo "Failed to collect showmigrations for $a"
+    collect_config_files $a || echo "Failed to collect config files for $a"
+    collect_management_commands $a || echo "Failed to collect management commands for $a"
   done
 else
   echo "No AAP namespaces found, skipping custom collection functions"
@@ -960,23 +1100,253 @@ EOF
 
     # Add Commands section
     echo "        <div class=\"section\">" >> $NAMESPACE_HTML
-    echo "            <h2>⚙️ Command Outputs</h2>" >> $NAMESPACE_HTML
+    echo "            <h2>⚙️ Management Command Outputs</h2>" >> $NAMESPACE_HTML
+    echo "            <p>Output from AAP management commands run against components in this namespace:</p>" >> $NAMESPACE_HTML
 
     # Find command outputs related to this namespace
     found_commands=false
     if [ -d "${BASE_COLLECTION_PATH}/commands" ]; then
-      echo "            <ul>" >> $NAMESPACE_HTML
-      for cmdfile in $(find ${BASE_COLLECTION_PATH}/commands -name "*${namespace}*" -name "*.log" -type f | sort); do
-        filename=$(basename "$cmdfile")
-        relative_path=$(echo "$cmdfile" | sed "s|${BASE_COLLECTION_PATH}/||")
-        echo "                <li><a href=\"../$relative_path\">$filename</a></li>" >> $NAMESPACE_HTML
-        found_commands=true
-      done
-      echo "            </ul>" >> $NAMESPACE_HTML
+
+      # Group commands by component type
+      # Controller commands
+      controller_commands=$(find ${BASE_COLLECTION_PATH}/commands -name "*awx*" -name "*.log" -type f | sort)
+      if [ -n "$controller_commands" ]; then
+        echo "            <h3>🎮 Automation Controller Commands</h3>" >> $NAMESPACE_HTML
+        echo "            <ul>" >> $NAMESPACE_HTML
+        for cmdfile in $controller_commands; do
+          filename=$(basename "$cmdfile")
+          relative_path=$(echo "$cmdfile" | sed "s|${BASE_COLLECTION_PATH}/||")
+
+          # Create descriptive display names
+          display_name="$filename"
+          if [[ "$filename" == *"showmigrations"* ]]; then
+            display_name="📊 $(echo "$filename" | sed 's/-awx.*/ - Database Migrations/')"
+          elif [[ "$filename" == *"version"* ]]; then
+            display_name="🏷️ $(echo "$filename" | sed 's/-awx.*/ - Version Info/')"
+          elif [[ "$filename" == *"dbcheck"* ]]; then
+            display_name="🔍 $(echo "$filename" | sed 's/-awx.*/ - Database Check/')"
+          fi
+
+          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          found_commands=true
+        done
+        echo "            </ul>" >> $NAMESPACE_HTML
+      fi
+
+      # Gateway commands
+      gateway_commands=$(find ${BASE_COLLECTION_PATH}/commands -name "*gateway*" -name "*.log" -type f | sort)
+      if [ -n "$gateway_commands" ]; then
+        echo "            <h3>🌐 AAP Gateway Commands</h3>" >> $NAMESPACE_HTML
+        echo "            <ul>" >> $NAMESPACE_HTML
+        for cmdfile in $gateway_commands; do
+          filename=$(basename "$cmdfile")
+          relative_path=$(echo "$cmdfile" | sed "s|${BASE_COLLECTION_PATH}/||")
+
+          # Create descriptive display names
+          display_name="$filename"
+          if [[ "$filename" == *"showmigrations"* ]]; then
+            display_name="📊 $(echo "$filename" | sed 's/-gateway.*/ - Database Migrations/')"
+          elif [[ "$filename" == *"version"* ]]; then
+            display_name="🏷️ $(echo "$filename" | sed 's/-gateway.*/ - Version Info/')"
+          elif [[ "$filename" == *"dbcheck"* ]]; then
+            display_name="🔍 $(echo "$filename" | sed 's/-gateway.*/ - Database Check/')"
+          fi
+
+          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          found_commands=true
+        done
+        echo "            </ul>" >> $NAMESPACE_HTML
+      fi
+
+      # Hub commands
+      hub_commands=$(find ${BASE_COLLECTION_PATH}/commands -name "*hub*" -name "*.log" -type f | sort)
+      if [ -n "$hub_commands" ]; then
+        echo "            <h3>🏪 Automation Hub Commands</h3>" >> $NAMESPACE_HTML
+        echo "            <ul>" >> $NAMESPACE_HTML
+        for cmdfile in $hub_commands; do
+          filename=$(basename "$cmdfile")
+          relative_path=$(echo "$cmdfile" | sed "s|${BASE_COLLECTION_PATH}/||")
+
+          # Create descriptive display names
+          display_name="$filename"
+          if [[ "$filename" == *"showmigrations"* ]]; then
+            display_name="📊 $(echo "$filename" | sed 's/-hub.*/ - Database Migrations/')"
+          elif [[ "$filename" == *"status"* ]]; then
+            display_name="📈 $(echo "$filename" | sed 's/-hub.*/ - Status Check/')"
+          elif [[ "$filename" == *"version"* ]]; then
+            display_name="🏷️ $(echo "$filename" | sed 's/-hub.*/ - Version Info/')"
+          fi
+
+          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          found_commands=true
+        done
+        echo "            </ul>" >> $NAMESPACE_HTML
+      fi
+
+      # EDA commands
+      eda_commands=$(find ${BASE_COLLECTION_PATH}/commands -name "*eda*" -name "*.log" -type f | sort)
+      if [ -n "$eda_commands" ]; then
+        echo "            <h3>🔄 Event-Driven Automation Commands</h3>" >> $NAMESPACE_HTML
+        echo "            <ul>" >> $NAMESPACE_HTML
+        for cmdfile in $eda_commands; do
+          filename=$(basename "$cmdfile")
+          relative_path=$(echo "$cmdfile" | sed "s|${BASE_COLLECTION_PATH}/||")
+
+          # Create descriptive display names
+          display_name="$filename"
+          if [[ "$filename" == *"showmigrations"* ]]; then
+            display_name="📊 $(echo "$filename" | sed 's/-eda.*/ - Database Migrations/')"
+          elif [[ "$filename" == *"version"* ]]; then
+            display_name="🏷️ $(echo "$filename" | sed 's/-eda.*/ - Version Info/')"
+          elif [[ "$filename" == *"dbcheck"* ]]; then
+            display_name="🔍 $(echo "$filename" | sed 's/-eda.*/ - Database Check/')"
+          fi
+
+          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          found_commands=true
+        done
+        echo "            </ul>" >> $NAMESPACE_HTML
+      fi
     fi
 
     if [ "$found_commands" = false ]; then
-      echo "            <p><em>No command outputs found for this namespace.</em></p>" >> $NAMESPACE_HTML
+      echo "            <p><em>No management command outputs found for this namespace.</em></p>" >> $NAMESPACE_HTML
+      echo "            <p><strong>Note:</strong> Management commands are collected from running AAP component pods. If no commands are shown, the components may not be running or accessible.</p>" >> $NAMESPACE_HTML
+    fi
+
+    echo "        </div>" >> $NAMESPACE_HTML
+
+    # Add Config Files section
+    echo "        <div class=\"section\">" >> $NAMESPACE_HTML
+    echo "            <h2>⚙️ Configuration Files</h2>" >> $NAMESPACE_HTML
+    echo "            <p>Configuration files collected from key AAP containers in this namespace:</p>" >> $NAMESPACE_HTML
+
+    # Find config files related to this namespace
+    found_configs=false
+    if [ -d "${BASE_COLLECTION_PATH}/configs" ]; then
+
+      # Group configs by component type
+      # Gateway configs
+      gateway_configs=$(find ${BASE_COLLECTION_PATH}/configs -name "*gateway*" -name "*.yml" -o -name "*gateway*" -name "*.conf" -type f | sort)
+      if [ -n "$gateway_configs" ]; then
+        echo "            <h3>🌐 AAP Gateway Configuration</h3>" >> $NAMESPACE_HTML
+        echo "            <ul>" >> $NAMESPACE_HTML
+        for configfile in $gateway_configs; do
+          filename=$(basename "$configfile")
+          relative_path=$(echo "$configfile" | sed "s|${BASE_COLLECTION_PATH}/||")
+
+          # Create descriptive display names
+          display_name="$filename"
+          if [[ "$filename" == *"proxy.yml"* ]]; then
+            display_name="🔧 $(echo "$filename" | sed 's/-api-proxy.yml/ - Gateway Proxy Configuration/')"
+          elif [[ "$filename" == *"nginx.conf"* ]]; then
+            display_name="🌐 $(echo "$filename" | sed 's/-proxy-nginx.conf/ - Nginx Configuration/')"
+          elif [[ "$filename" == *"redis.conf"* ]]; then
+            display_name="🗄️ $(echo "$filename" | sed 's/-redis.conf/ - Redis Configuration/')"
+          fi
+
+          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          found_configs=true
+        done
+        echo "            </ul>" >> $NAMESPACE_HTML
+      fi
+
+      # Controller configs
+      controller_configs=$(find ${BASE_COLLECTION_PATH}/configs -name "*controller*" -name "*.conf" -o -name "*controller*" -name "*.py" -type f | sort)
+      if [ -n "$controller_configs" ]; then
+        echo "            <h3>🎮 Automation Controller Configuration</h3>" >> $NAMESPACE_HTML
+        echo "            <ul>" >> $NAMESPACE_HTML
+        for configfile in $controller_configs; do
+          filename=$(basename "$configfile")
+          relative_path=$(echo "$configfile" | sed "s|${BASE_COLLECTION_PATH}/||")
+
+          # Create descriptive display names
+          display_name="$filename"
+          if [[ "$filename" == *"receptor.conf"* ]]; then
+            display_name="📡 $(echo "$filename" | sed 's/-.*-receptor.conf/ - Receptor Configuration/')"
+          elif [[ "$filename" == *"nginx.conf"* ]]; then
+            display_name="🌐 $(echo "$filename" | sed 's/-.*-nginx.conf/ - Nginx Configuration/')"
+          elif [[ "$filename" == *"redis.conf"* ]]; then
+            display_name="🗄️ $(echo "$filename" | sed 's/-.*-redis.conf/ - Redis Configuration/')"
+          elif [[ "$filename" == *"supervisord.conf"* ]]; then
+            display_name="👥 $(echo "$filename" | sed 's/-.*-supervisord.conf/ - Supervisord Configuration/')"
+          elif [[ "$filename" == *"tower_settings.py"* ]]; then
+            display_name="⚙️ $(echo "$filename" | sed 's/-.*-tower_settings.py/ - Tower Settings/')"
+          fi
+
+          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          found_configs=true
+        done
+        echo "            </ul>" >> $NAMESPACE_HTML
+      fi
+
+      # Hub configs
+      hub_configs=$(find ${BASE_COLLECTION_PATH}/configs -name "*hub*" -name "*.conf" -o -name "*hub*" -name "*.py" -type f | sort)
+      if [ -n "$hub_configs" ]; then
+        echo "            <h3>🏪 Automation Hub Configuration</h3>" >> $NAMESPACE_HTML
+        echo "            <ul>" >> $NAMESPACE_HTML
+        for configfile in $hub_configs; do
+          filename=$(basename "$configfile")
+          relative_path=$(echo "$configfile" | sed "s|${BASE_COLLECTION_PATH}/||")
+
+          # Create descriptive display names
+          display_name="$filename"
+          if [[ "$filename" == *"nginx.conf"* ]]; then
+            display_name="🌐 $(echo "$filename" | sed 's/-.*-nginx.conf/ - Nginx Configuration/')"
+          elif [[ "$filename" == *"pulp_settings.py"* ]]; then
+            display_name="📦 $(echo "$filename" | sed 's/-.*-pulp_settings.py/ - Pulp Settings/')"
+          fi
+
+          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          found_configs=true
+        done
+        echo "            </ul>" >> $NAMESPACE_HTML
+      fi
+
+      # EDA configs
+      eda_configs=$(find ${BASE_COLLECTION_PATH}/configs -name "*eda*" -name "*.conf" -o -name "*eda*" -name "*.py" -type f | sort)
+      if [ -n "$eda_configs" ]; then
+        echo "            <h3>🔄 Event-Driven Automation Configuration</h3>" >> $NAMESPACE_HTML
+        echo "            <ul>" >> $NAMESPACE_HTML
+        for configfile in $eda_configs; do
+          filename=$(basename "$configfile")
+          relative_path=$(echo "$configfile" | sed "s|${BASE_COLLECTION_PATH}/||")
+
+          # Create descriptive display names
+          display_name="$filename"
+          if [[ "$filename" == *"nginx.conf"* ]]; then
+            display_name="🌐 $(echo "$filename" | sed 's/-.*-nginx.conf/ - Nginx Configuration/')"
+          elif [[ "$filename" == *"eda_settings.py"* ]]; then
+            display_name="⚡ $(echo "$filename" | sed 's/-.*-eda_settings.py/ - EDA Settings/')"
+          fi
+
+          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          found_configs=true
+        done
+        echo "            </ul>" >> $NAMESPACE_HTML
+      fi
+
+      # Redis standalone configs
+      redis_configs=$(find ${BASE_COLLECTION_PATH}/configs -name "*redis*" -name "*.conf" -type f | grep -v controller | grep -v gateway | sort)
+      if [ -n "$redis_configs" ]; then
+        echo "            <h3>🗄️ Redis Configuration</h3>" >> $NAMESPACE_HTML
+        echo "            <ul>" >> $NAMESPACE_HTML
+        for configfile in $redis_configs; do
+          filename=$(basename "$configfile")
+          relative_path=$(echo "$configfile" | sed "s|${BASE_COLLECTION_PATH}/||")
+
+          display_name="🗄️ $(echo "$filename" | sed 's/-redis.conf/ - Redis Configuration/')"
+
+          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          found_configs=true
+        done
+        echo "            </ul>" >> $NAMESPACE_HTML
+      fi
+    fi
+
+    if [ "$found_configs" = false ]; then
+      echo "            <p><em>No configuration files found for this namespace.</em></p>" >> $NAMESPACE_HTML
+      echo "            <p><strong>Note:</strong> Configuration files are collected from running AAP component pods. If no configs are shown, the components may not be running or accessible.</p>" >> $NAMESPACE_HTML
     fi
 
     echo "        </div>" >> $NAMESPACE_HTML
@@ -1106,6 +1476,7 @@ generate_index_html() {
             <a href="#namespaces">📁 Namespace Details</a>
             <a href="#summary">📊 Reports</a>
             <a href="#resources">🗂️ Resources</a>
+            <a href="#configs">⚙️ Config Files</a>
             <a href="#cluster">🏗️ Cluster Info</a>
         </div>
 
@@ -1214,6 +1585,46 @@ EOF
             </ul>
         </div>
 
+        <div class="section" id="configs">
+            <h2>⚙️ Configuration Files</h2>
+            <p>Configuration files collected from key AAP containers:</p>
+EOF
+
+  # Add config files links based on what actually exists
+  if [ -d "${BASE_COLLECTION_PATH}/configs" ]; then
+    echo "            <ul>" >> $INDEX_FILE
+    echo "                <li><a href=\"configs/\">📂 Browse All Configuration Files</a> - Complete configuration files from AAP containers</li>" >> $INDEX_FILE
+
+    # Count different types of config files
+    gateway_config_count=$(find ${BASE_COLLECTION_PATH}/configs -name "*gateway*" -type f | wc -l)
+    controller_config_count=$(find ${BASE_COLLECTION_PATH}/configs -name "*controller*" -type f | wc -l)
+    hub_config_count=$(find ${BASE_COLLECTION_PATH}/configs -name "*hub*" -type f | wc -l)
+    eda_config_count=$(find ${BASE_COLLECTION_PATH}/configs -name "*eda*" -type f | wc -l)
+    redis_config_count=$(find ${BASE_COLLECTION_PATH}/configs -name "*redis*" -type f | wc -l)
+
+    if [ $gateway_config_count -gt 0 ]; then
+      echo "                <li>🌐 Gateway configs: $gateway_config_count files (proxy.yml, nginx.conf, redis.conf)</li>" >> $INDEX_FILE
+    fi
+    if [ $controller_config_count -gt 0 ]; then
+      echo "                <li>🎮 Controller configs: $controller_config_count files (receptor.conf, nginx.conf, redis.conf, supervisord.conf, tower_settings.py)</li>" >> $INDEX_FILE
+    fi
+    if [ $hub_config_count -gt 0 ]; then
+      echo "                <li>🏪 Hub configs: $hub_config_count files (nginx.conf, pulp_settings.py)</li>" >> $INDEX_FILE
+    fi
+    if [ $eda_config_count -gt 0 ]; then
+      echo "                <li>🔄 EDA configs: $eda_config_count files (nginx.conf, eda_settings.py)</li>" >> $INDEX_FILE
+    fi
+    if [ $redis_config_count -gt 0 ]; then
+      echo "                <li>🗄️ Redis configs: $redis_config_count files (redis.conf)</li>" >> $INDEX_FILE
+    fi
+    echo "            </ul>" >> $INDEX_FILE
+  else
+    echo "            <p><em>No configuration files collected. This may indicate that AAP components were not running during collection.</em></p>" >> $INDEX_FILE
+  fi
+
+  cat >> $INDEX_FILE << 'EOF'
+        </div>
+
         <div class="section" id="cluster">
             <h2>🏗️ Cluster Information</h2>
             <p>OpenShift cluster and node information:</p>
@@ -1266,6 +1677,7 @@ EOF
                 <li><strong>Explore Namespace Details</strong> - Click on namespace links for detailed resources and logs</li>
                 <li><strong>Check Summary Reports</strong> - Review comprehensive analysis and error summaries</li>
                 <li><strong>Analyze Resource Status</strong> - Check PVC, deployment, and service status</li>
+                <li><strong>Review Configuration Files</strong> - Examine config files from key containers (proxy.yml, nginx.conf, redis.conf, etc.)</li>
                 <li><strong>Deep Dive</strong> - Use the raw namespace data for detailed investigation</li>
             </ol>
         </div>
@@ -1277,6 +1689,7 @@ EOF
                 <li><a href="reports/summary-report.html">🎯 Start Here - Summary Report</a></li>
                 <li><a href="pvc-status.log">💾 Storage Issues - PVC Status</a></li>
                 <li><a href="deployments.log">🚀 Pod Issues - Deployment Status</a></li>
+                <li><a href="configs/">⚙️ Configuration Issues - Config Files</a></li>
                 <li><a href="reports/error-summary.log">🚨 Application Errors - Error Summary</a></li>
             </ul>
         </div>
@@ -1298,7 +1711,8 @@ echo "Must-gather collection completed successfully!"
 echo "Enhanced features added:"
 echo "- initContainer logs collection"
 echo "- migration job logs collection"
-echo "- showmigrations output capture"
+echo "- comprehensive management commands output capture"
+echo "- configuration files collection from key containers"
 echo "- PVC status and common resources"
 echo "- Error analysis and summary report"
 echo "- AAP operator installation summary"
@@ -1307,3 +1721,4 @@ echo "- Restructured index.html for easy navigation"
 echo ""
 echo "Open index.html in a web browser to view the AAP installation summary."
 echo "Click on namespace links for detailed resources and logs per namespace."
+echo "Configuration files from key containers are available in the configs/ directory."
