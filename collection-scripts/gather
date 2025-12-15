@@ -1615,6 +1615,42 @@ EOF
                 <li><strong>Deep Dive</strong> - Use the raw namespace data for detailed investigation</li>
             </ol>
         </div>
+
+        <div class="section">
+            <h2>🔍 Using the OMC Tool</h2>
+            <p>The <strong>oc must-gather client (omc)</strong> is a powerful command-line tool for analyzing must-gather data. It allows you to query and inspect OpenShift resources as if you were connected to a live cluster.</p>
+
+            <h3>Basic Usage</h3>
+            <p>Set the must-gather directory and use omc commands:</p>
+            <pre style="background-color: #2c3e50; color: #ecf0f1; padding: 15px; border-radius: 5px; overflow-x: auto;">
+# Set the must-gather directory (option 1: using -use flag)
+omc use must-gather/
+
+# Or set it as an environment variable (option 2)
+export OMC_MUST_GATHER=must-gather/
+
+# Use omc to query resources (similar to oc/kubectl commands)
+omc get pods -A
+omc get deployments -n &lt;namespace&gt;
+omc describe pod &lt;pod-name&gt; -n &lt;namespace&gt;
+omc logs &lt;pod-name&gt; -n &lt;namespace&gt;
+omc get events -n &lt;namespace&gt; --sort-by='.lastTimestamp'
+            </pre>
+
+            <h3>Common OMC Commands for AAP Troubleshooting</h3>
+            <ul>
+                <li><code>omc get automationcontroller -A</code> - List all AutomationController instances</li>
+                <li><code>omc get automationhub -A</code> - List all AutomationHub instances</li>
+                <li><code>omc get eda -A</code> - List all EDA instances</li>
+                <li><code>omc get pods -n &lt;namespace&gt; -o wide</code> - View pod status and details</li>
+                <li><code>omc describe deployment &lt;deployment-name&gt; -n &lt;namespace&gt;</code> - Get deployment details</li>
+                <li><code>omc get events -A --field-selector type=Warning</code> - View warning events across all namespaces</li>
+            </ul>
+
+            <h3>Installation and Advanced Usage</h3>
+            <p>For detailed instructions on installing omc and advanced usage scenarios, refer to:</p>
+            <p><a href="https://access.redhat.com/solutions/6993921" target="_blank"><strong>Red Hat Knowledge Base Article: How to use the oc must-gather client (omc)</strong></a></p>
+        </div>
     </div>
 </body>
 </html>
