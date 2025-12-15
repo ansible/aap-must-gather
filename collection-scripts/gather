@@ -115,7 +115,7 @@ for a in $NS; do
   oc get ingress -n $a -o wide >> ${BASE_COLLECTION_PATH}/ingress.log 2>/dev/null || echo "No ingress found in namespace $a" >> ${BASE_COLLECTION_PATH}/ingress.log
 done
 
-for b in $(oc get -A subs --field-selector='metadata.name=ansible-automation-platform-operator' -o custom-columns=NAMESPACE:.metadata.namespace); do
+for b in $(oc get -A subs --no-headers=true --field-selector='metadata.name=ansible-automation-platform-operator' -o custom-columns=NAMESPACE:.metadata.namespace); do
   oc adm inspect ns/"$b" --dest-dir=${BASE_COLLECTION_PATH}/must-gather
 
   # Collect pod status for operator namespace
