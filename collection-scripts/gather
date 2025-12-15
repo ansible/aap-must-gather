@@ -48,8 +48,8 @@ done
 NS=`echo ${ANSIBLENS[@]} | xargs -n1 | sort -u`
 
 for a in $NS; do
-  oc adm inspect ns/"$a"  --dest-dir=must-gather
-  oc adm inspect -n $a csv --dest-dir=must-gather
+  oc adm inspect ns/"$a"  --dest-dir=${BASE_COLLECTION_PATH}/must-gather
+  oc adm inspect -n $a csv --dest-dir=${BASE_COLLECTION_PATH}/must-gather
 
   # Collect pod status for this namespace
   echo "Collecting pod status for namespace: $a"
@@ -116,7 +116,7 @@ for a in $NS; do
 done
 
 for b in $(oc get -A subs --field-selector='metadata.name=ansible-automation-platform-operator' -o custom-columns=NAMESPACE:.metadata.namespace); do
-  oc adm inspect ns/"$b" --dest-dir=must-gather
+  oc adm inspect ns/"$b" --dest-dir=${BASE_COLLECTION_PATH}/must-gather
 
   # Collect pod status for operator namespace
   echo "========================================" >> ${BASE_COLLECTION_PATH}/gather-aap.log
@@ -128,7 +128,7 @@ for b in $(oc get -A subs --field-selector='metadata.name=ansible-automation-pla
   mkdir -p "${BASE_COLLECTION_PATH}/pod-status"
   oc get pods -n $b -o wide > "${BASE_COLLECTION_PATH}/pod-status/${b}-pods.log" 2>/dev/null || echo "No pods found in namespace $b" > "${BASE_COLLECTION_PATH}/pod-status/${b}-pods.log"
 
-  oc adm inspect -n $b subs --dest-dir=must-gather
+  oc adm inspect -n $b subs --dest-dir=${BASE_COLLECTION_PATH}/must-gather
 done
 
 # Function to collect initContainer logs
