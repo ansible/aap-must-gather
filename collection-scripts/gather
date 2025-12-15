@@ -1476,7 +1476,6 @@ generate_index_html() {
             <a href="#namespaces">📁 Namespace Details</a>
             <a href="#summary">📊 Reports</a>
             <a href="#resources">🗂️ Resources</a>
-            <a href="#configs">⚙️ Config Files</a>
             <a href="#cluster">🏗️ Cluster Info</a>
         </div>
 
@@ -1585,46 +1584,6 @@ EOF
             </ul>
         </div>
 
-        <div class="section" id="configs">
-            <h2>⚙️ Configuration Files</h2>
-            <p>Configuration files collected from key AAP containers:</p>
-EOF
-
-  # Add config files links based on what actually exists
-  if [ -d "${BASE_COLLECTION_PATH}/configs" ]; then
-    echo "            <ul>" >> $INDEX_FILE
-    echo "                <li><a href=\"configs/\">📂 Browse All Configuration Files</a> - Complete configuration files from AAP containers</li>" >> $INDEX_FILE
-
-    # Count different types of config files
-    gateway_config_count=$(find ${BASE_COLLECTION_PATH}/configs -name "*gateway*" -type f | wc -l)
-    controller_config_count=$(find ${BASE_COLLECTION_PATH}/configs -name "*controller*" -type f | wc -l)
-    hub_config_count=$(find ${BASE_COLLECTION_PATH}/configs -name "*hub*" -type f | wc -l)
-    eda_config_count=$(find ${BASE_COLLECTION_PATH}/configs -name "*eda*" -type f | wc -l)
-    redis_config_count=$(find ${BASE_COLLECTION_PATH}/configs -name "*redis*" -type f | wc -l)
-
-    if [ $gateway_config_count -gt 0 ]; then
-      echo "                <li>🌐 Gateway configs: $gateway_config_count files (proxy.yml, nginx.conf, redis.conf)</li>" >> $INDEX_FILE
-    fi
-    if [ $controller_config_count -gt 0 ]; then
-      echo "                <li>🎮 Controller configs: $controller_config_count files (receptor.conf, nginx.conf, redis.conf, supervisord.conf, tower_settings.py)</li>" >> $INDEX_FILE
-    fi
-    if [ $hub_config_count -gt 0 ]; then
-      echo "                <li>🏪 Hub configs: $hub_config_count files (nginx.conf, pulp_settings.py)</li>" >> $INDEX_FILE
-    fi
-    if [ $eda_config_count -gt 0 ]; then
-      echo "                <li>🔄 EDA configs: $eda_config_count files (nginx.conf, eda_settings.py)</li>" >> $INDEX_FILE
-    fi
-    if [ $redis_config_count -gt 0 ]; then
-      echo "                <li>🗄️ Redis configs: $redis_config_count files (redis.conf)</li>" >> $INDEX_FILE
-    fi
-    echo "            </ul>" >> $INDEX_FILE
-  else
-    echo "            <p><em>No configuration files collected. This may indicate that AAP components were not running during collection.</em></p>" >> $INDEX_FILE
-  fi
-
-  cat >> $INDEX_FILE << 'EOF'
-        </div>
-
         <div class="section" id="cluster">
             <h2>🏗️ Cluster Information</h2>
             <p>OpenShift cluster and node information:</p>
@@ -1677,7 +1636,6 @@ EOF
                 <li><strong>Explore Namespace Details</strong> - Click on namespace links for detailed resources and logs</li>
                 <li><strong>Check Summary Reports</strong> - Review comprehensive analysis and error summaries</li>
                 <li><strong>Analyze Resource Status</strong> - Check PVC, deployment, and service status</li>
-                <li><strong>Review Configuration Files</strong> - Examine config files from key containers (proxy.yml, nginx.conf, redis.conf, etc.)</li>
                 <li><strong>Deep Dive</strong> - Use the raw namespace data for detailed investigation</li>
             </ol>
         </div>
@@ -1689,7 +1647,6 @@ EOF
                 <li><a href="reports/summary-report.html">🎯 Start Here - Summary Report</a></li>
                 <li><a href="pvc-status.log">💾 Storage Issues - PVC Status</a></li>
                 <li><a href="deployments.log">🚀 Pod Issues - Deployment Status</a></li>
-                <li><a href="configs/">⚙️ Configuration Issues - Config Files</a></li>
                 <li><a href="reports/error-summary.log">🚨 Application Errors - Error Summary</a></li>
             </ul>
         </div>
