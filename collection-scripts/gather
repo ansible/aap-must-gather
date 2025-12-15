@@ -1461,7 +1461,6 @@ generate_index_html() {
             <p>Start here for a high-level overview of your AAP deployment:</p>
             <ul>
                 <li><a href="reports/summary-report.html"><strong>Comprehensive Summary Report</strong></a> - Version info, error analysis, and key findings</li>
-                <li><a href="reports/error-summary.log">Error Summary Log</a> - Detailed error analysis from all log files</li>
             </ul>
         </div>
 
