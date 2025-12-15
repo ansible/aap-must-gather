@@ -1451,7 +1451,7 @@ generate_index_html() {
         <div class="nav-menu">
             <a href="#aap-summary">AAP Installations</a>
             <a href="#namespaces">Namespace Details</a>
-            <a href="#summary">📊 Reports</a>
+            <a href="#summary">Reports</a>
             <a href="#resources">Resources</a>
             <a href="#cluster">Cluster Info</a>
         </div>
@@ -1615,17 +1615,6 @@ EOF
                 <li><strong>Analyze Resource Status</strong> - Check PVC, deployment, and service status</li>
                 <li><strong>Deep Dive</strong> - Use the raw namespace data for detailed investigation</li>
             </ol>
-        </div>
-
-        <div class="section">
-            <h2>Quick Links</h2>
-            <p>Common troubleshooting starting points:</p>
-            <ul>
-                <li><a href="reports/summary-report.html">Start Here - Summary Report</a></li>
-                <li><a href="pvc-status.log">Storage Issues - PVC Status</a></li>
-                <li><a href="deployments.log">Pod Issues - Deployment Status</a></li>
-                <li><a href="reports/error-summary.log">Application Errors - Error Summary</a></li>
-            </ul>
         </div>
     </div>
 </body>
