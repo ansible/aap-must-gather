@@ -603,11 +603,11 @@ EOF
   }
 
   # Extract information for each CR type
-  extract_cr_info "ansibleautomationplatforms" "AAP" "🏢" "aap.ansible.com"
-  extract_cr_info "automationcontrollers" "AutomationController" "🎮" "automationcontroller.ansible.com"
-  extract_cr_info "automationhubs" "AutomationHub" "📦" "automationhub.ansible.com"
-  extract_cr_info "edas" "EDA" "⚡" "eda.ansible.com"
-  extract_cr_info "ansiblelightspeeds" "AnsibleLightspeed" "💡" "lightspeed.ansible.com"
+  extract_cr_info "ansibleautomationplatforms" "AAP" "" "aap.ansible.com"
+  extract_cr_info "automationcontrollers" "AutomationController" "" "automationcontroller.ansible.com"
+  extract_cr_info "automationhubs" "AutomationHub" "" "automationhub.ansible.com"
+  extract_cr_info "edas" "EDA" "" "eda.ansible.com"
+  extract_cr_info "ansiblelightspeeds" "AnsibleLightspeed" "" "lightspeed.ansible.com"
 
   # Sort by namespace and generate grouped table
   if [ -f "$TEMP_CR_DATA" ] && [ -s "$TEMP_CR_DATA" ]; then
@@ -864,14 +864,14 @@ EOF
 
     # Add AAP Custom Resources section
     echo "        <div class=\"section\">" >> $NAMESPACE_HTML
-    echo "            <h2>🎯 AAP Custom Resources</h2>" >> $NAMESPACE_HTML
+    echo "            <h2><img src=\"../assets/aap-icon-3x3-rounded.png\" alt=\"AAP\" style=\"width: 24px; height: 24px; vertical-align: middle; margin-right: 8px;\"> AAP Custom Resources</h2>" >> $NAMESPACE_HTML
 
     # Check for each type of AAP resource
     found_resources=false
 
     # AAP instances
     if [ -d "$ns_dir/aap.ansible.com/ansibleautomationplatforms" ]; then
-      echo "            <h3>🏢 AnsibleAutomationPlatform</h3>" >> $NAMESPACE_HTML
+      echo "            <h3>AnsibleAutomationPlatform</h3>" >> $NAMESPACE_HTML
       echo "            <ul>" >> $NAMESPACE_HTML
       for aap_file in $(find "$ns_dir/aap.ansible.com/ansibleautomationplatforms" -name "*.yaml" -type f | sort); do
         filename=$(basename "$aap_file")
@@ -884,7 +884,7 @@ EOF
 
     # AutomationController instances
     if [ -d "$ns_dir/automationcontroller.ansible.com/automationcontrollers" ]; then
-      echo "            <h3>🎮 AutomationController</h3>" >> $NAMESPACE_HTML
+      echo "            <h3>AutomationController</h3>" >> $NAMESPACE_HTML
       echo "            <ul>" >> $NAMESPACE_HTML
       for ac_file in $(find "$ns_dir/automationcontroller.ansible.com/automationcontrollers" -name "*.yaml" -type f | sort); do
         filename=$(basename "$ac_file")
@@ -897,7 +897,7 @@ EOF
 
     # AutomationHub instances
     if [ -d "$ns_dir/automationhub.ansible.com/automationhubs" ]; then
-      echo "            <h3>📦 AutomationHub</h3>" >> $NAMESPACE_HTML
+      echo "            <h3>AutomationHub</h3>" >> $NAMESPACE_HTML
       echo "            <ul>" >> $NAMESPACE_HTML
       for ah_file in $(find "$ns_dir/automationhub.ansible.com/automationhubs" -name "*.yaml" -type f | sort); do
         filename=$(basename "$ah_file")
@@ -910,7 +910,7 @@ EOF
 
     # EDA instances
     if [ -d "$ns_dir/eda.ansible.com/edas" ]; then
-      echo "            <h3>⚡ EDA</h3>" >> $NAMESPACE_HTML
+      echo "            <h3>EDA</h3>" >> $NAMESPACE_HTML
       echo "            <ul>" >> $NAMESPACE_HTML
       for eda_file in $(find "$ns_dir/eda.ansible.com/edas" -name "*.yaml" -type f | sort); do
         filename=$(basename "$eda_file")
@@ -923,7 +923,7 @@ EOF
 
     # AnsibleLightspeed instances
     if [ -d "$ns_dir/lightspeed.ansible.com/ansiblelightspeeds" ]; then
-      echo "            <h3>💡 AnsibleLightspeed</h3>" >> $NAMESPACE_HTML
+      echo "            <h3>AnsibleLightspeed</h3>" >> $NAMESPACE_HTML
       echo "            <ul>" >> $NAMESPACE_HTML
       for als_file in $(find "$ns_dir/lightspeed.ansible.com/ansiblelightspeeds" -name "*.yaml" -type f | sort); do
         filename=$(basename "$als_file")
@@ -1700,6 +1700,17 @@ EOF
 
   echo "Index.html generated: $INDEX_FILE"
 }
+
+# Copy assets directory if it exists
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+if [ -d "$REPO_ROOT/assets" ]; then
+  echo "Copying assets directory..."
+  cp -r "$REPO_ROOT/assets" ${BASE_COLLECTION_PATH}/
+elif [ -d "assets" ]; then
+  echo "Copying assets directory..."
+  cp -r assets ${BASE_COLLECTION_PATH}/
+fi
 
 # Generate the summary report and index
 echo "Generating enhanced reports..."
