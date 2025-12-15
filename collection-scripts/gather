@@ -634,29 +634,6 @@ EOF
   echo "        <p><em>Custom Resource instances grouped by namespace with their current version and status information.</em></p>" >> $SUMMARY_FILE
   echo "    </div>" >> $SUMMARY_FILE
 
-  # Analyze errors in log files
-  echo "    <div class='section'>" >> $SUMMARY_FILE
-  echo "        <h2>Error Analysis</h2>" >> $SUMMARY_FILE
-  echo "        <p>Searching for errors in collected logs...</p>" >> $SUMMARY_FILE
-
-  # Search for errors in all log files (excluding migration-related false positives)
-  > $ERROR_SUMMARY
-  find ${BASE_COLLECTION_PATH} -name "*.log" -type f | while read logfile; do
-    echo "Analyzing: $logfile" >> $ERROR_SUMMARY
-    grep -i -n -E "(error|exception|failed|fatal|panic|traceback)" "$logfile" 2>/dev/null | \
-      grep -v -E "(0007_alter_validators_add_error_messages|0009_remove_task_non_fatal_errors|0010_servicecluster_healthy_panic_threshold_and_more)" | \
-      head -20 >> $ERROR_SUMMARY || true
-    echo "---" >> $ERROR_SUMMARY
-  done
-
-  # Add error summary to HTML
-  echo "        <h3>Error Summary</h3>" >> $SUMMARY_FILE
-  echo "        <pre>" >> $SUMMARY_FILE
-  head -100 $ERROR_SUMMARY >> $SUMMARY_FILE 2>/dev/null || echo "No errors found or error file not accessible" >> $SUMMARY_FILE
-  echo "        </pre>" >> $SUMMARY_FILE
-  echo "        <p><em>Full error analysis available in: reports/error-summary.log</em></p>" >> $SUMMARY_FILE
-  echo "    </div>" >> $SUMMARY_FILE
-
   # Close HTML
   echo "</body></html>" >> $SUMMARY_FILE
 
