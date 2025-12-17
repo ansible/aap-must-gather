@@ -257,27 +257,32 @@ collect_config_files() {
     oc exec $pod -n $namespace -c redis -- cat /etc/redis/redis.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-redis.conf" 2>/dev/null || echo "No redis container or redis.conf in gateway $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 
-  # Controller-web pods - collect receptor.conf, redis.conf, nginx.conf, supervisord.conf, tower_settings.py
+  # Controller-web pods - collect redis.conf, nginx.conf, supervisord.conf, tower_settings.py
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=automationcontroller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     # Check if this is a web pod (not task pod)
     if [[ "$pod" == *"web"* ]]; then
       echo "Collecting config files from controller web pod: $pod"
 
-      # Collect receptor.conf
-      oc exec $pod -n $namespace -c myaap-controller-web -- cat /etc/receptor/receptor.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-web-receptor.conf" 2>/dev/null || echo "Failed to collect receptor.conf from controller web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      # Get the web container name dynamically (it contains "-web" in the name)
+      web_container=$(oc get pod $pod -n $namespace -o jsonpath='{.spec.containers[*].name}' 2>/dev/null | tr ' ' '\n' | grep -- '-web$' | head -1)
+
+      if [ -z "$web_container" ]; then
+        echo "Warning: Could not find web container in pod $pod, skipping config collection" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+        continue
+      fi
 
       # Collect redis.conf from redis container
       oc exec $pod -n $namespace -c redis -- cat /etc/redis/redis.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-web-redis.conf" 2>/dev/null || echo "Failed to collect redis.conf from controller web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
       # Collect nginx.conf
-      oc exec $pod -n $namespace -c myaap-controller-web -- cat /etc/nginx/nginx.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-web-nginx.conf" 2>/dev/null || echo "Failed to collect nginx.conf from controller web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      oc exec $pod -n $namespace -c $web_container -- cat /etc/nginx/nginx.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-web-nginx.conf" 2>/dev/null || echo "Failed to collect nginx.conf from controller web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
       # Collect supervisord.conf
-      oc exec $pod -n $namespace -c myaap-controller-web -- cat /etc/supervisord.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-web-supervisord.conf" 2>/dev/null || echo "Failed to collect supervisord.conf from controller web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      oc exec $pod -n $namespace -c $web_container -- cat /etc/supervisord.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-web-supervisord.conf" 2>/dev/null || echo "Failed to collect supervisord.conf from controller web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
       # Collect tower_settings.py
-      oc exec $pod -n $namespace -c myaap-controller-web -- cat /etc/tower/settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-web-tower_settings.py" 2>/dev/null || \
-      oc exec $pod -n $namespace -c myaap-controller-web -- cat /etc/tower/tower_settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-web-tower_settings.py" 2>/dev/null || \
+      oc exec $pod -n $namespace -c $web_container -- cat /etc/tower/settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-web-tower_settings.py" 2>/dev/null || \
+      oc exec $pod -n $namespace -c $web_container -- cat /etc/tower/tower_settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-web-tower_settings.py" 2>/dev/null || \
       echo "Failed to collect tower_settings.py from controller web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
     fi
   done
@@ -286,18 +291,26 @@ collect_config_files() {
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=task -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     echo "Collecting config files from controller task pod: $pod"
 
+    # Get the task container name dynamically (it contains "-task" in the name)
+    task_container=$(oc get pod $pod -n $namespace -o jsonpath='{.spec.containers[*].name}' 2>/dev/null | tr ' ' '\n' | grep -- '-task$' | head -1)
+
+    if [ -z "$task_container" ]; then
+      echo "Warning: Could not find task container in pod $pod, skipping config collection" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      continue
+    fi
+
     # Collect receptor.conf
-    oc exec $pod -n $namespace -c automation-controller-task -- cat /etc/receptor/receptor.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-task-receptor.conf" 2>/dev/null || echo "Failed to collect receptor.conf from controller task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c $task_container -- cat /etc/receptor/receptor.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-task-receptor.conf" 2>/dev/null || echo "Failed to collect receptor.conf from controller task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # Collect redis.conf from redis container
     oc exec $pod -n $namespace -c redis -- cat /etc/redis/redis.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-task-redis.conf" 2>/dev/null || echo "Failed to collect redis.conf from controller task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # Collect supervisord.conf
-    oc exec $pod -n $namespace -c automation-controller-task -- cat /etc/supervisord.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-task-supervisord.conf" 2>/dev/null || echo "Failed to collect supervisord.conf from controller task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c $task_container -- cat /etc/supervisord.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-task-supervisord.conf" 2>/dev/null || echo "Failed to collect supervisord.conf from controller task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # Collect tower_settings.py
-    oc exec $pod -n $namespace -c automation-controller-task -- cat /etc/tower/settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-task-tower_settings.py" 2>/dev/null || \
-    oc exec $pod -n $namespace -c automation-controller-task -- cat /etc/tower/tower_settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-task-tower_settings.py" 2>/dev/null || \
+    oc exec $pod -n $namespace -c $task_container -- cat /etc/tower/settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-task-tower_settings.py" 2>/dev/null || \
+    oc exec $pod -n $namespace -c $task_container -- cat /etc/tower/tower_settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-task-tower_settings.py" 2>/dev/null || \
     echo "Failed to collect tower_settings.py from controller task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 
@@ -341,14 +354,22 @@ collect_management_commands() {
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=task -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     echo "Collecting management commands from controller task pod: $pod"
 
+    # Get the task container name dynamically (it contains "-task" in the name)
+    task_container=$(oc get pod $pod -n $namespace -o jsonpath='{.spec.containers[*].name}' 2>/dev/null | tr ' ' '\n' | grep -- '-task$' | head -1)
+
+    if [ -z "$task_container" ]; then
+      echo "Warning: Could not find task container in pod $pod, skipping management commands collection" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      continue
+    fi
+
     # showmigrations
-    oc exec $pod -n $namespace -c automation-controller-task -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c $task_container -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # version info
-    oc exec $pod -n $namespace -c automation-controller-task -- awx-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-version.log" 2>/dev/null || echo "Failed to collect version from task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c $task_container -- awx-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-version.log" 2>/dev/null || echo "Failed to collect version from task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # check database connectivity
-    oc exec $pod -n $namespace -c automation-controller-task -- awx-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c $task_container -- awx-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # Note: list_settings command removed to avoid exposing sensitive configuration data
   done
@@ -359,11 +380,19 @@ collect_management_commands() {
     if [[ "$pod" == *"web"* ]]; then
       echo "Collecting management commands from controller web pod: $pod"
 
+      # Get the web container name dynamically (it contains "-web" in the name)
+      web_container=$(oc get pod $pod -n $namespace -o jsonpath='{.spec.containers[*].name}' 2>/dev/null | tr ' ' '\n' | grep -- '-web$' | head -1)
+
+      if [ -z "$web_container" ]; then
+        echo "Warning: Could not find web container in pod $pod, skipping management commands collection" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+        continue
+      fi
+
       # showmigrations
-      oc exec $pod -n $namespace -c myaap-controller-web -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      oc exec $pod -n $namespace -c $web_container -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
       # version info
-      oc exec $pod -n $namespace -c myaap-controller-web -- awx-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-version.log" 2>/dev/null || echo "Failed to collect version from web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      oc exec $pod -n $namespace -c $web_container -- awx-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-version.log" 2>/dev/null || echo "Failed to collect version from web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
     fi
   done
 
