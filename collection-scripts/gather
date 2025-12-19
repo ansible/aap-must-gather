@@ -1624,12 +1624,6 @@ EOF
     echo "                <li><a href=\"event-filter.html\">Event Filter</a> - Interactive event filtering interface</li>" >> $INDEX_FILE
   fi
 
-  if [ -f "${BASE_COLLECTION_PATH}/must-gather/timestamp" ]; then
-    echo "                <li><a href=\"must-gather/timestamp\">Collection Timestamp</a> - When the data was collected</li>" >> $INDEX_FILE
-  elif [ -f "${BASE_COLLECTION_PATH}/timestamp" ]; then
-    echo "                <li><a href=\"timestamp\">Collection Timestamp</a> - When the data was collected</li>" >> $INDEX_FILE
-  fi
-
   cat >> $INDEX_FILE << 'EOF'
             </ul>
         </div>
