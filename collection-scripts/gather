@@ -1013,18 +1013,33 @@ EOF
     echo "        <div class=\"section\">" >> $NAMESPACE_HTML
     echo "            <h2>Logs</h2>" >> $NAMESPACE_HTML
 
+    # Get the list of pods in this namespace from the pod status file
+    pod_status_file="${BASE_COLLECTION_PATH}/pod-status/${namespace}-pods.log"
+    namespace_pods=""
+    if [ -f "$pod_status_file" ]; then
+      # Extract pod names from the pod status file (skip header line)
+      namespace_pods=$(tail -n +2 "$pod_status_file" | awk '{print $1}' | grep -v '^$')
+    fi
+
     # Find operator logs first (these are most important for troubleshooting)
     found_operator_logs=false
-    if [ -d "${BASE_COLLECTION_PATH}/logs" ]; then
-      # Look for operator pod logs in this namespace
-      operator_logs=$(find ${BASE_COLLECTION_PATH}/logs -name "*operator*" -name "*.log" -type f | grep -E "(${namespace}|operator)" | sort)
+    if [ -d "${BASE_COLLECTION_PATH}/logs" ] && [ -n "$namespace_pods" ]; then
+      # Build a list of operator logs for pods in this namespace
+      operator_logs=""
+      for pod in $namespace_pods; do
+        # Find logs for this specific pod that contain "operator" in the filename
+        pod_operator_logs=$(find ${BASE_COLLECTION_PATH}/logs -maxdepth 1 -name "${pod}-*operator*.log" -type f 2>/dev/null)
+        if [ -n "$pod_operator_logs" ]; then
+          operator_logs="$operator_logs $pod_operator_logs"
+        fi
+      done
 
       if [ -n "$operator_logs" ]; then
         echo "            <h3>Operator Pod Logs</h3>" >> $NAMESPACE_HTML
         echo "            <p>Latest logs from AAP operator pods (most useful for troubleshooting operator issues):</p>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
 
-        for logfile in $operator_logs; do
+        for logfile in $(echo $operator_logs | tr ' ' '\n' | sort); do
           filename=$(basename "$logfile")
           relative_path=$(echo "$logfile" | sed "s|${BASE_COLLECTION_PATH}/||")
 
@@ -1047,16 +1062,23 @@ EOF
 
     # Find pod container and initContainer logs
     found_container_logs=false
-    if [ -d "${BASE_COLLECTION_PATH}/logs" ]; then
-      # Look for container logs (both regular containers and initContainers)
-      container_logs=$(find ${BASE_COLLECTION_PATH}/logs -name "*.log" -type f | grep -E "(${namespace}|container|init)" | grep -v operator | sort)
+    if [ -d "${BASE_COLLECTION_PATH}/logs" ] && [ -n "$namespace_pods" ]; then
+      # Build a list of container logs for pods in this namespace
+      container_logs=""
+      for pod in $namespace_pods; do
+        # Find logs for this specific pod that don't contain "operator" in the filename
+        pod_container_logs=$(find ${BASE_COLLECTION_PATH}/logs -maxdepth 1 -name "${pod}-*.log" -type f 2>/dev/null | grep -v operator)
+        if [ -n "$pod_container_logs" ]; then
+          container_logs="$container_logs $pod_container_logs"
+        fi
+      done
 
       if [ -n "$container_logs" ]; then
         echo "            <h3>Pod Container Logs</h3>" >> $NAMESPACE_HTML
         echo "            <p>Logs from pod containers and initContainers in this namespace:</p>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
 
-        for logfile in $container_logs; do
+        for logfile in $(echo $container_logs | tr ' ' '\n' | sort); do
           filename=$(basename "$logfile")
           relative_path=$(echo "$logfile" | sed "s|${BASE_COLLECTION_PATH}/||")
 
@@ -1077,28 +1099,7 @@ EOF
       fi
     fi
 
-    # Find other application logs related to this namespace
-    found_app_logs=false
-    if [ -d "${BASE_COLLECTION_PATH}/logs" ]; then
-      # Look for non-operator, non-container logs related to this namespace
-      app_logs=$(find ${BASE_COLLECTION_PATH}/logs -name "*${namespace}*" -name "*.log" -type f | grep -v operator | grep -v -E "(container|init)" | sort)
-
-      if [ -n "$app_logs" ]; then
-        echo "            <h3>Application Logs</h3>" >> $NAMESPACE_HTML
-        echo "            <p>Other logs from AAP application components:</p>" >> $NAMESPACE_HTML
-        echo "            <ul>" >> $NAMESPACE_HTML
-
-        for logfile in $app_logs; do
-          filename=$(basename "$logfile")
-          relative_path=$(echo "$logfile" | sed "s|${BASE_COLLECTION_PATH}/||")
-          echo "                <li><a href=\"../$relative_path\">$filename</a></li>" >> $NAMESPACE_HTML
-          found_app_logs=true
-        done
-        echo "            </ul>" >> $NAMESPACE_HTML
-      fi
-    fi
-
-    if [ "$found_operator_logs" = false ] && [ "$found_container_logs" = false ] && [ "$found_app_logs" = false ]; then
+    if [ "$found_operator_logs" = false ] && [ "$found_container_logs" = false ]; then
       echo "            <p><em>No logs found for this namespace.</em></p>" >> $NAMESPACE_HTML
     fi
 
@@ -1111,15 +1112,22 @@ EOF
 
     # Find command outputs related to this namespace
     found_commands=false
-    if [ -d "${BASE_COLLECTION_PATH}/commands" ]; then
+    if [ -d "${BASE_COLLECTION_PATH}/commands" ] && [ -n "$namespace_pods" ]; then
 
       # Group commands by component type
-      # Controller commands
-      controller_commands=$(find ${BASE_COLLECTION_PATH}/commands -name "*awx*" -name "*.log" -type f | sort)
+      # Controller commands - filter by pods in this namespace
+      controller_commands=""
+      for pod in $namespace_pods; do
+        pod_controller_commands=$(find ${BASE_COLLECTION_PATH}/commands -maxdepth 1 -name "${pod}-*awx*.log" -type f 2>/dev/null)
+        if [ -n "$pod_controller_commands" ]; then
+          controller_commands="$controller_commands $pod_controller_commands"
+        fi
+      done
+
       if [ -n "$controller_commands" ]; then
         echo "            <h3>Automation Controller Commands</h3>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
-        for cmdfile in $controller_commands; do
+        for cmdfile in $(echo $controller_commands | tr ' ' '\n' | sort); do
           filename=$(basename "$cmdfile")
           relative_path=$(echo "$cmdfile" | sed "s|${BASE_COLLECTION_PATH}/||")
 
@@ -1139,12 +1147,19 @@ EOF
         echo "            </ul>" >> $NAMESPACE_HTML
       fi
 
-      # Gateway commands
-      gateway_commands=$(find ${BASE_COLLECTION_PATH}/commands -name "*gateway*" -name "*.log" -type f | sort)
+      # Gateway commands - filter by pods in this namespace
+      gateway_commands=""
+      for pod in $namespace_pods; do
+        pod_gateway_commands=$(find ${BASE_COLLECTION_PATH}/commands -maxdepth 1 -name "${pod}-*gateway*.log" -type f 2>/dev/null)
+        if [ -n "$pod_gateway_commands" ]; then
+          gateway_commands="$gateway_commands $pod_gateway_commands"
+        fi
+      done
+
       if [ -n "$gateway_commands" ]; then
         echo "            <h3>AAP Gateway Commands</h3>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
-        for cmdfile in $gateway_commands; do
+        for cmdfile in $(echo $gateway_commands | tr ' ' '\n' | sort); do
           filename=$(basename "$cmdfile")
           relative_path=$(echo "$cmdfile" | sed "s|${BASE_COLLECTION_PATH}/||")
 
@@ -1164,12 +1179,19 @@ EOF
         echo "            </ul>" >> $NAMESPACE_HTML
       fi
 
-      # Hub commands
-      hub_commands=$(find ${BASE_COLLECTION_PATH}/commands -name "*hub*" -name "*.log" -type f | sort)
+      # Hub commands - filter by pods in this namespace
+      hub_commands=""
+      for pod in $namespace_pods; do
+        pod_hub_commands=$(find ${BASE_COLLECTION_PATH}/commands -maxdepth 1 -name "${pod}-*hub*.log" -type f 2>/dev/null)
+        if [ -n "$pod_hub_commands" ]; then
+          hub_commands="$hub_commands $pod_hub_commands"
+        fi
+      done
+
       if [ -n "$hub_commands" ]; then
         echo "            <h3>Automation Hub Commands</h3>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
-        for cmdfile in $hub_commands; do
+        for cmdfile in $(echo $hub_commands | tr ' ' '\n' | sort); do
           filename=$(basename "$cmdfile")
           relative_path=$(echo "$cmdfile" | sed "s|${BASE_COLLECTION_PATH}/||")
 
@@ -1189,12 +1211,19 @@ EOF
         echo "            </ul>" >> $NAMESPACE_HTML
       fi
 
-      # EDA commands
-      eda_commands=$(find ${BASE_COLLECTION_PATH}/commands -name "*eda*" -name "*.log" -type f | sort)
+      # EDA commands - filter by pods in this namespace
+      eda_commands=""
+      for pod in $namespace_pods; do
+        pod_eda_commands=$(find ${BASE_COLLECTION_PATH}/commands -maxdepth 1 -name "${pod}-*eda*.log" -type f 2>/dev/null)
+        if [ -n "$pod_eda_commands" ]; then
+          eda_commands="$eda_commands $pod_eda_commands"
+        fi
+      done
+
       if [ -n "$eda_commands" ]; then
         echo "            <h3>Event-Driven Automation Commands</h3>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
-        for cmdfile in $eda_commands; do
+        for cmdfile in $(echo $eda_commands | tr ' ' '\n' | sort); do
           filename=$(basename "$cmdfile")
           relative_path=$(echo "$cmdfile" | sed "s|${BASE_COLLECTION_PATH}/||")
 
@@ -1229,15 +1258,22 @@ EOF
 
     # Find config files related to this namespace
     found_configs=false
-    if [ -d "${BASE_COLLECTION_PATH}/configs" ]; then
+    if [ -d "${BASE_COLLECTION_PATH}/configs" ] && [ -n "$namespace_pods" ]; then
 
       # Group configs by component type
-      # Gateway configs
-      gateway_configs=$(find ${BASE_COLLECTION_PATH}/configs -name "*gateway*" -name "*.yml" -o -name "*gateway*" -name "*.conf" -type f | sort)
+      # Gateway configs - filter by pods in this namespace
+      gateway_configs=""
+      for pod in $namespace_pods; do
+        pod_gateway_configs=$(find ${BASE_COLLECTION_PATH}/configs -maxdepth 1 \( -name "${pod}-*gateway*.yml" -o -name "${pod}-*gateway*.conf" \) -type f 2>/dev/null)
+        if [ -n "$pod_gateway_configs" ]; then
+          gateway_configs="$gateway_configs $pod_gateway_configs"
+        fi
+      done
+
       if [ -n "$gateway_configs" ]; then
         echo "            <h3>AAP Gateway Configuration</h3>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
-        for configfile in $gateway_configs; do
+        for configfile in $(echo $gateway_configs | tr ' ' '\n' | sort); do
           filename=$(basename "$configfile")
           relative_path=$(echo "$configfile" | sed "s|${BASE_COLLECTION_PATH}/||")
 
@@ -1257,12 +1293,19 @@ EOF
         echo "            </ul>" >> $NAMESPACE_HTML
       fi
 
-      # Controller configs
-      controller_configs=$(find ${BASE_COLLECTION_PATH}/configs -name "*controller*" -name "*.conf" -o -name "*controller*" -name "*.py" -type f | sort)
+      # Controller configs - filter by pods in this namespace
+      controller_configs=""
+      for pod in $namespace_pods; do
+        pod_controller_configs=$(find ${BASE_COLLECTION_PATH}/configs -maxdepth 1 \( -name "${pod}-*controller*.conf" -o -name "${pod}-*controller*.py" \) -type f 2>/dev/null)
+        if [ -n "$pod_controller_configs" ]; then
+          controller_configs="$controller_configs $pod_controller_configs"
+        fi
+      done
+
       if [ -n "$controller_configs" ]; then
         echo "            <h3>Automation Controller Configuration</h3>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
-        for configfile in $controller_configs; do
+        for configfile in $(echo $controller_configs | tr ' ' '\n' | sort); do
           filename=$(basename "$configfile")
           relative_path=$(echo "$configfile" | sed "s|${BASE_COLLECTION_PATH}/||")
 
@@ -1286,12 +1329,19 @@ EOF
         echo "            </ul>" >> $NAMESPACE_HTML
       fi
 
-      # Hub configs
-      hub_configs=$(find ${BASE_COLLECTION_PATH}/configs -name "*hub*" -name "*.conf" -o -name "*hub*" -name "*.py" -type f | sort)
+      # Hub configs - filter by pods in this namespace
+      hub_configs=""
+      for pod in $namespace_pods; do
+        pod_hub_configs=$(find ${BASE_COLLECTION_PATH}/configs -maxdepth 1 \( -name "${pod}-*hub*.conf" -o -name "${pod}-*hub*.py" \) -type f 2>/dev/null)
+        if [ -n "$pod_hub_configs" ]; then
+          hub_configs="$hub_configs $pod_hub_configs"
+        fi
+      done
+
       if [ -n "$hub_configs" ]; then
         echo "            <h3>Automation Hub Configuration</h3>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
-        for configfile in $hub_configs; do
+        for configfile in $(echo $hub_configs | tr ' ' '\n' | sort); do
           filename=$(basename "$configfile")
           relative_path=$(echo "$configfile" | sed "s|${BASE_COLLECTION_PATH}/||")
 
@@ -1309,12 +1359,19 @@ EOF
         echo "            </ul>" >> $NAMESPACE_HTML
       fi
 
-      # EDA configs
-      eda_configs=$(find ${BASE_COLLECTION_PATH}/configs -name "*eda*" -name "*.conf" -o -name "*eda*" -name "*.py" -type f | sort)
+      # EDA configs - filter by pods in this namespace
+      eda_configs=""
+      for pod in $namespace_pods; do
+        pod_eda_configs=$(find ${BASE_COLLECTION_PATH}/configs -maxdepth 1 \( -name "${pod}-*eda*.conf" -o -name "${pod}-*eda*.py" \) -type f 2>/dev/null)
+        if [ -n "$pod_eda_configs" ]; then
+          eda_configs="$eda_configs $pod_eda_configs"
+        fi
+      done
+
       if [ -n "$eda_configs" ]; then
         echo "            <h3>Event-Driven Automation Configuration</h3>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
-        for configfile in $eda_configs; do
+        for configfile in $(echo $eda_configs | tr ' ' '\n' | sort); do
           filename=$(basename "$configfile")
           relative_path=$(echo "$configfile" | sed "s|${BASE_COLLECTION_PATH}/||")
 
@@ -1332,12 +1389,19 @@ EOF
         echo "            </ul>" >> $NAMESPACE_HTML
       fi
 
-      # Redis standalone configs
-      redis_configs=$(find ${BASE_COLLECTION_PATH}/configs -name "*redis*" -name "*.conf" -type f | grep -v controller | grep -v gateway | sort)
+      # Redis standalone configs - filter by pods in this namespace
+      redis_configs=""
+      for pod in $namespace_pods; do
+        pod_redis_configs=$(find ${BASE_COLLECTION_PATH}/configs -maxdepth 1 -name "${pod}-*redis*.conf" -type f 2>/dev/null | grep -v controller | grep -v gateway)
+        if [ -n "$pod_redis_configs" ]; then
+          redis_configs="$redis_configs $pod_redis_configs"
+        fi
+      done
+
       if [ -n "$redis_configs" ]; then
         echo "            <h3>Redis Configuration</h3>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
-        for configfile in $redis_configs; do
+        for configfile in $(echo $redis_configs | tr ' ' '\n' | sort); do
           filename=$(basename "$configfile")
           relative_path=$(echo "$configfile" | sed "s|${BASE_COLLECTION_PATH}/||")
 
