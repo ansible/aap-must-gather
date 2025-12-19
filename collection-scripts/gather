@@ -1046,11 +1046,26 @@ EOF
           # Create a more readable display name for operator logs
           display_name="$filename"
           if [[ "$filename" == *"operator-controller-manager"* ]]; then
+            # Extract operator type (e.g., "aap-gateway", "automation-controller", etc.)
+            operator_type=$(echo "$filename" | sed -E 's/^(.*)-operator-controller-manager.*/\1/')
+
+            # Extract container name by removing prefix and suffix
+            # Pattern: {operator-type}-operator-controller-manager-{pod-hash}-{container-name}-operator[-previous].log
+            temp=$(echo "$filename" | sed -E 's/^.*-operator-controller-manager-//')
+            # Remove pod hash (format: {hash1}-{hash2}-)
+            temp2=$(echo "$temp" | sed -E 's/^[a-z0-9]+-[a-z0-9]+-//')
+            # Remove -operator[-previous].log suffix
+            container_name=$(echo "$temp2" | sed -E 's/-operator(-previous)?\.log$//')
+
+            # Determine if this is current or previous log
             if [[ "$filename" == *"previous"* ]]; then
-              display_name="$(echo "$filename" | sed 's/-operator.*/ (Previous Log)/')"
+              log_type="Previous"
             else
-              display_name="$(echo "$filename" | sed 's/-operator.*/ (Current Log)/')"
+              log_type="Current"
             fi
+
+            # Format the display name
+            display_name="$operator_type - $container_name ($log_type)"
           fi
 
           echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
