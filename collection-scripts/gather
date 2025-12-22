@@ -378,7 +378,8 @@ collect_management_commands() {
     # check database connectivity
     oc exec $pod -n $namespace -c $task_container -- awx-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from task $pod (container: $task_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
-    # Note: list_settings command removed to avoid exposing sensitive configuration data
+    # print_settings - collect Controller settings (will be sanitized in future enhancement)
+    oc exec $pod -n $namespace -c $task_container -- awx-manage print_settings > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-print_settings.log" 2>/dev/null || echo "Failed to collect print_settings from task $pod (container: $task_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 
   # Collect from automation controller web pods
@@ -407,6 +408,9 @@ collect_management_commands() {
 
       # version info
       oc exec $pod -n $namespace -c $web_container -- awx-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-version.log" 2>/dev/null || echo "Failed to collect version from web $pod (container: $web_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+      # print_settings - collect Controller settings (will be sanitized in future enhancement)
+      oc exec $pod -n $namespace -c $web_container -- awx-manage print_settings > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-print_settings.log" 2>/dev/null || echo "Failed to collect print_settings from web $pod (container: $web_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
     fi
   done
 
@@ -456,6 +460,11 @@ collect_management_commands() {
     oc exec $pod -n $namespace -c api -- pulpcore-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-version.log" 2>/dev/null || \
     oc exec $pod -n $namespace -c api -- python -m pulpcore.app.manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-version.log" 2>/dev/null || \
     echo "Failed to collect version from hub $pod (container: api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # diffsettings - collect Hub settings (shows only settings that differ from defaults)
+    oc exec $pod -n $namespace -c api -- pulpcore-manage diffsettings > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-diffsettings.log" 2>/dev/null || \
+    oc exec $pod -n $namespace -c api -- python -m pulpcore.app.manage diffsettings > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-diffsettings.log" 2>/dev/null || \
+    echo "Failed to collect diffsettings from hub $pod (container: api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 
   # Collect from EDA pods
@@ -477,6 +486,9 @@ collect_management_commands() {
 
     # check database connectivity
     oc exec $pod -n $namespace -c eda-api -- aap-eda-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from EDA $pod (container: eda-api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+
+    # diffsettings - collect EDA settings
+    oc exec $pod -n $namespace -c eda-api -- aap-eda-manage diffsettings > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-diffsettings.log" 2>/dev/null || echo "Failed to collect diffsettings from EDA $pod (container: eda-api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 }
 
@@ -1197,6 +1209,8 @@ EOF
             display_name="$(echo "$filename" | sed -E 's/-awx-(task|web)-version\.log$/ - Version Info/') ($container_type)"
           elif [[ "$filename" == *"dbcheck"* ]]; then
             display_name="$(echo "$filename" | sed -E 's/-awx-(task|web)-dbcheck\.log$/ - Database Check/') ($container_type)"
+          elif [[ "$filename" == *"print_settings"* ]]; then
+            display_name="$(echo "$filename" | sed -E 's/-awx-(task|web)-print_settings\.log$/ - Settings (print_settings)/') ($container_type)"
           fi
 
           echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
@@ -1261,6 +1275,8 @@ EOF
             display_name="$(echo "$filename" | sed 's/-hub-status\.log$/ - Status Check/')"
           elif [[ "$filename" == *"version"* ]]; then
             display_name="$(echo "$filename" | sed 's/-hub-version\.log$/ - Version Info/')"
+          elif [[ "$filename" == *"diffsettings"* ]]; then
+            display_name="$(echo "$filename" | sed 's/-hub-diffsettings\.log$/ - Settings (diffsettings)/')"
           fi
 
           echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
@@ -1293,6 +1309,8 @@ EOF
             display_name="$(echo "$filename" | sed 's/-eda-version\.log$/ - Version Info/')"
           elif [[ "$filename" == *"dbcheck"* ]]; then
             display_name="$(echo "$filename" | sed 's/-eda-dbcheck\.log$/ - Database Check/')"
+          elif [[ "$filename" == *"diffsettings"* ]]; then
+            display_name="$(echo "$filename" | sed 's/-eda-diffsettings\.log$/ - Settings (diffsettings)/')"
           fi
 
           echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
