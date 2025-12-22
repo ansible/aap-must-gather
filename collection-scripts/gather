@@ -9,6 +9,115 @@ mkdir -p ${BASE_COLLECTION_PATH}/logs
 mkdir -p ${BASE_COLLECTION_PATH}/commands
 mkdir -p ${BASE_COLLECTION_PATH}/reports
 
+# ============================================================================
+# CONFIGURATION: Management Commands to Collect
+# Based on aoc_azure_sosreport pattern for configuration-driven collection
+# Format: "command:subcommand:output_filename"
+# ============================================================================
+
+# Controller Task Pod Commands
+declare -a CONTROLLER_TASK_COMMANDS=(
+  "awx-manage:showmigrations:awx-task-showmigrations.log"
+  "awx-manage:version:awx-task-version.log"
+  "awx-manage:check --database default:awx-task-dbcheck.log"
+  "awx-manage:print_settings:awx-task-print_settings.log"
+  "awx-manage:list_instances:awx-task-list_instances.log"
+  "awx-manage:check_license --data:awx-task-check_license.log"
+  "awx-manage:run_callback_receiver --status:awx-task-callback_receiver_status.log"
+  "awx-manage:run_dispatcher --status:awx-task-dispatcher_status.log"
+  "awx-manage:check_db:awx-task-check_db.log"
+)
+
+# Controller Web Pod Commands
+declare -a CONTROLLER_WEB_COMMANDS=(
+  "awx-manage:showmigrations:awx-web-showmigrations.log"
+  "awx-manage:version:awx-web-version.log"
+  "awx-manage:print_settings:awx-web-print_settings.log"
+)
+
+# Gateway Pod Commands
+declare -a GATEWAY_COMMANDS=(
+  "aap-gateway-manage:list_services:gateway-list_services.log"
+  "aap-gateway-manage:check:gateway-check.log"
+  "aap-gateway-manage:print_settings:gateway-print_settings.log"
+  "aap-gateway-manage:inspectdb:gateway-inspectdb.log"
+  "aap-gateway-manage:showmigrations:gateway-showmigrations.log"
+  "aap-gateway-manage:test:gateway-test.log"
+  "aap-gateway-manage:version:gateway-version.log"
+  "aap-gateway-manage:check --database default:gateway-dbcheck.log"
+)
+
+# Hub API Pod Commands
+declare -a HUB_COMMANDS=(
+  "pulpcore-manage:showmigrations:hub-showmigrations.log"
+  "pulpcore-manage:version:hub-version.log"
+  "pulpcore-manage:check --database default:hub-dbcheck.log"
+  "pulpcore-manage:diffsettings:hub-diffsettings.log"
+)
+
+# EDA API Pod Commands
+declare -a EDA_COMMANDS=(
+  "aap-eda-manage:showmigrations:eda-showmigrations.log"
+  "aap-eda-manage:version:eda-version.log"
+  "aap-eda-manage:check --database default:eda-dbcheck.log"
+  "aap-eda-manage:diffsettings:eda-diffsettings.log"
+  "aap-eda-manage:check:eda-check.log"
+  "aap-eda-manage:test:eda-test.log"
+  "aap-eda-manage:RBAC_checks:eda-RBAC_checks.log"
+)
+
+# ============================================================================
+# Helper Function: Execute Management Command
+# ============================================================================
+# Usage: exec_management_command <pod> <namespace> <container> <command_spec>
+# Command spec format: "command:subcommand:output_filename"
+exec_management_command() {
+  local pod=$1
+  local namespace=$2
+  local container=$3
+  local command_spec=$4
+
+  # Parse command spec (format: "command:subcommand:filename")
+  local cmd_base=$(echo "$command_spec" | cut -d':' -f1)
+  local cmd_args=$(echo "$command_spec" | cut -d':' -f2)
+  local output_file=$(echo "$command_spec" | cut -d':' -f3)
+
+  local full_command="$cmd_base $cmd_args"
+  local output_path="${BASE_COLLECTION_PATH}/commands/${pod}-${output_file}"
+
+  # Execute command and capture output
+  oc exec $pod -n $namespace -c $container -- $full_command > "$output_path" 2>/dev/null
+
+  if [ $? -eq 0 ]; then
+    echo "  ✓ Collected: $cmd_base $cmd_args" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+  else
+    echo "  ✗ Failed: $cmd_base $cmd_args from $pod (container: $container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    # Create empty file to indicate attempt was made
+    echo "Command failed or not available" > "$output_path"
+  fi
+}
+
+# ============================================================================
+# Helper Function: Execute Commands for Pod
+# ============================================================================
+# Usage: exec_commands_for_pod <pod> <namespace> <container> <commands_array_name>
+exec_commands_for_pod() {
+  local pod=$1
+  local namespace=$2
+  local container=$3
+  local commands_array_name=$4
+
+  # Get array reference
+  local -n commands_array=$commands_array_name
+
+  echo "Collecting ${#commands_array[@]} commands from pod: $pod (container: $container)"
+
+  # Loop through all commands
+  for command_spec in "${commands_array[@]}"; do
+    exec_management_command "$pod" "$namespace" "$container" "$command_spec"
+  done
+}
+
 ANSIBLECRD="automationcontrollerbackups.automationcontroller.ansible.com \
   automationcontrollerrestores.automationcontroller.ansible.com \
   automationcontrollers.automationcontroller.ansible.com \
@@ -346,11 +455,14 @@ collect_config_files() {
 }
 
 # Function to collect comprehensive management commands output
+# Refactored to use configuration-driven approach based on aoc_azure_sosreport pattern
 collect_management_commands() {
   local namespace=$1
   echo "Collecting management commands output for namespace: $namespace"
 
+  # ========================================================================
   # Collect from automation controller task pods
+  # ========================================================================
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=task -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     # Check if pod is running
     pod_phase=$(oc get pod $pod -n $namespace -o jsonpath='{.status.phase}' 2>/dev/null)
@@ -367,22 +479,13 @@ collect_management_commands() {
       continue
     fi
 
-    echo "Collecting management commands from controller task pod: $pod (container: $task_container)"
-
-    # showmigrations
-    oc exec $pod -n $namespace -c $task_container -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from task $pod (container: $task_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-    # version info
-    oc exec $pod -n $namespace -c $task_container -- awx-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-version.log" 2>/dev/null || echo "Failed to collect version from task $pod (container: $task_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-    # check database connectivity
-    oc exec $pod -n $namespace -c $task_container -- awx-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from task $pod (container: $task_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-    # print_settings - collect Controller settings (will be sanitized in future enhancement)
-    oc exec $pod -n $namespace -c $task_container -- awx-manage print_settings > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-print_settings.log" 2>/dev/null || echo "Failed to collect print_settings from task $pod (container: $task_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    # Execute all configured commands for this pod type
+    exec_commands_for_pod "$pod" "$namespace" "$task_container" "CONTROLLER_TASK_COMMANDS"
   done
 
+  # ========================================================================
   # Collect from automation controller web pods
+  # ========================================================================
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=automationcontroller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     # Check if this is a web pod (not task pod)
     if [[ "$pod" == *"web"* ]]; then
@@ -401,20 +504,14 @@ collect_management_commands() {
         continue
       fi
 
-      echo "Collecting management commands from controller web pod: $pod (container: $web_container)"
-
-      # showmigrations
-      oc exec $pod -n $namespace -c $web_container -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from web $pod (container: $web_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-      # version info
-      oc exec $pod -n $namespace -c $web_container -- awx-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-version.log" 2>/dev/null || echo "Failed to collect version from web $pod (container: $web_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-      # print_settings - collect Controller settings (will be sanitized in future enhancement)
-      oc exec $pod -n $namespace -c $web_container -- awx-manage print_settings > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-print_settings.log" 2>/dev/null || echo "Failed to collect print_settings from web $pod (container: $web_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      # Execute all configured commands for this pod type
+      exec_commands_for_pod "$pod" "$namespace" "$web_container" "CONTROLLER_WEB_COMMANDS"
     fi
   done
 
+  # ========================================================================
   # Collect from gateway pods
+  # ========================================================================
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=aap-gateway -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     # Check if pod is running
     pod_phase=$(oc get pod $pod -n $namespace -o jsonpath='{.status.phase}' 2>/dev/null)
@@ -423,19 +520,13 @@ collect_management_commands() {
       continue
     fi
 
-    echo "Collecting management commands from gateway pod: $pod (container: api)"
-
-    # showmigrations
-    oc exec $pod -n $namespace -c api -- aap-gateway-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-gateway-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from gateway $pod (container: api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-    # version info
-    oc exec $pod -n $namespace -c api -- aap-gateway-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-gateway-version.log" 2>/dev/null || echo "Failed to collect version from gateway $pod (container: api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-    # check database connectivity
-    oc exec $pod -n $namespace -c api -- aap-gateway-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-gateway-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from gateway $pod (container: api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    # Execute all configured commands for this pod type
+    exec_commands_for_pod "$pod" "$namespace" "api" "GATEWAY_COMMANDS"
   done
 
+  # ========================================================================
   # Collect from automation hub API pods
+  # ========================================================================
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/name=automationhub-api -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     # Check if pod is running
     pod_phase=$(oc get pod $pod -n $namespace -o jsonpath='{.status.phase}' 2>/dev/null)
@@ -444,30 +535,13 @@ collect_management_commands() {
       continue
     fi
 
-    echo "Collecting management commands from hub API pod: $pod (container: api)"
-
-    # showmigrations
-    oc exec $pod -n $namespace -c api -- pulpcore-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-showmigrations.log" 2>/dev/null || \
-    oc exec $pod -n $namespace -c api -- python -m pulpcore.app.manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-showmigrations.log" 2>/dev/null || \
-    echo "Failed to collect showmigrations from hub $pod (container: api) - management command not available" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-    # status check
-    oc exec $pod -n $namespace -c api -- pulpcore-manage status > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-status.log" 2>/dev/null || \
-    oc exec $pod -n $namespace -c api -- python -m pulpcore.app.manage status > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-status.log" 2>/dev/null || \
-    echo "Failed to collect status from hub $pod (container: api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-    # version info
-    oc exec $pod -n $namespace -c api -- pulpcore-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-version.log" 2>/dev/null || \
-    oc exec $pod -n $namespace -c api -- python -m pulpcore.app.manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-version.log" 2>/dev/null || \
-    echo "Failed to collect version from hub $pod (container: api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-    # diffsettings - collect Hub settings (shows only settings that differ from defaults)
-    oc exec $pod -n $namespace -c api -- pulpcore-manage diffsettings > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-diffsettings.log" 2>/dev/null || \
-    oc exec $pod -n $namespace -c api -- python -m pulpcore.app.manage diffsettings > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-diffsettings.log" 2>/dev/null || \
-    echo "Failed to collect diffsettings from hub $pod (container: api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    # Execute all configured commands for this pod type
+    exec_commands_for_pod "$pod" "$namespace" "api" "HUB_COMMANDS"
   done
 
+  # ========================================================================
   # Collect from EDA pods
+  # ========================================================================
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=eda-api -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     # Check if pod is running
     pod_phase=$(oc get pod $pod -n $namespace -o jsonpath='{.status.phase}' 2>/dev/null)
@@ -476,20 +550,170 @@ collect_management_commands() {
       continue
     fi
 
-    echo "Collecting management commands from EDA pod: $pod (container: eda-api)"
-
-    # showmigrations
-    oc exec $pod -n $namespace -c eda-api -- aap-eda-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from EDA $pod (container: eda-api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-    # version info
-    oc exec $pod -n $namespace -c eda-api -- aap-eda-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-version.log" 2>/dev/null || echo "Failed to collect version from EDA $pod (container: eda-api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-    # check database connectivity
-    oc exec $pod -n $namespace -c eda-api -- aap-eda-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from EDA $pod (container: eda-api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-    # diffsettings - collect EDA settings
-    oc exec $pod -n $namespace -c eda-api -- aap-eda-manage diffsettings > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-diffsettings.log" 2>/dev/null || echo "Failed to collect diffsettings from EDA $pod (container: eda-api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    # Execute all configured commands for this pod type
+    # Note: RBAC_checks may fail due to known platform issues (AAP-52870)
+    exec_commands_for_pod "$pod" "$namespace" "eda-api" "EDA_COMMANDS"
   done
+}
+
+# Function to sanitize sensitive values in settings command outputs
+# Based on the aoc_azure_sosreport sanitization pattern
+sanitize_settings() {
+  echo "Sanitizing sensitive values in settings command outputs..."
+
+  if [ ! -d "${BASE_COLLECTION_PATH}/commands" ]; then
+    echo "No commands directory found, skipping sanitization" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    return
+  fi
+
+  # Sanitize Controller print_settings files
+  for settings_file in ${BASE_COLLECTION_PATH}/commands/*-awx-*-print_settings.log; do
+    if [ -f "$settings_file" ]; then
+      echo "Sanitizing Controller settings: $(basename $settings_file)"
+
+      # Create a temporary file for sed operations
+      temp_file="${settings_file}.tmp"
+      cp "$settings_file" "$temp_file"
+
+      # Sanitize specific sensitive settings using sed with after/before pattern
+      # Pattern: Find lines between "SETTING_NAME =" and the next quote-comma
+
+      # SUBSCRIPTIONS_PASSWORD
+      sed -i '/SUBSCRIPTIONS_PASSWORD.*=/,/",$/{/SUBSCRIPTIONS_PASSWORD.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # PASSWORD in DATABASES dict
+      sed -i "/'PASSWORD':/,/, 'HOST':/{/'PASSWORD':/!{/, 'HOST':/ !s/.*/        '\''*************'\'',/}}" "$temp_file" 2>/dev/null || true
+
+      # BROADCAST_WEBSOCKET_SECRET
+      sed -i '/BROADCAST_WEBSOCKET_SECRET.*=/,/",$/{/BROADCAST_WEBSOCKET_SECRET.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # EMAIL_HOST_PASSWORD
+      sed -i '/EMAIL_HOST_PASSWORD.*=/,/",$/{/EMAIL_HOST_PASSWORD.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # RADIUS_SECRET
+      sed -i '/RADIUS_SECRET.*=/,/",$/{/RADIUS_SECRET.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # SECRET_KEY
+      sed -i '/SECRET_KEY.*=/,/",$/{/SECRET_KEY.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # SOCIAL_AUTH_AZUREAD_OAUTH2_SECRET
+      sed -i '/SOCIAL_AUTH_AZUREAD_OAUTH2_SECRET.*=/,/",$/{/SOCIAL_AUTH_AZUREAD_OAUTH2_SECRET.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # SOCIAL_AUTH_GITHUB_ENTERPRISE_ORG_SECRET
+      sed -i '/SOCIAL_AUTH_GITHUB_ENTERPRISE_ORG_SECRET.*=/,/",$/{/SOCIAL_AUTH_GITHUB_ENTERPRISE_ORG_SECRET.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # SOCIAL_AUTH_GITHUB_ENTERPRISE_SECRET
+      sed -i '/SOCIAL_AUTH_GITHUB_ENTERPRISE_SECRET.*=/,/",$/{/SOCIAL_AUTH_GITHUB_ENTERPRISE_SECRET.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # SOCIAL_AUTH_GITHUB_ENTERPRISE_TEAM_SECRET
+      sed -i '/SOCIAL_AUTH_GITHUB_ENTERPRISE_TEAM_SECRET.*=/,/",$/{/SOCIAL_AUTH_GITHUB_ENTERPRISE_TEAM_SECRET.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # SOCIAL_AUTH_GITHUB_ORG_SECRET
+      sed -i '/SOCIAL_AUTH_GITHUB_ORG_SECRET.*=/,/",$/{/SOCIAL_AUTH_GITHUB_ORG_SECRET.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # SOCIAL_AUTH_GITHUB_SECRET
+      sed -i '/SOCIAL_AUTH_GITHUB_SECRET.*=/,/",$/{/SOCIAL_AUTH_GITHUB_SECRET.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # SOCIAL_AUTH_GITHUB_TEAM_SECRET
+      sed -i '/SOCIAL_AUTH_GITHUB_TEAM_SECRET.*=/,/",$/{/SOCIAL_AUTH_GITHUB_TEAM_SECRET.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET
+      sed -i '/SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET.*=/,/",$/{/SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # TACACSPLUS_SECRET
+      sed -i '/TACACSPLUS_SECRET.*=/,/",$/{/TACACSPLUS_SECRET.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # Move sanitized file back
+      mv "$temp_file" "$settings_file"
+      echo "Sanitized: $(basename $settings_file)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    fi
+  done
+
+  # Sanitize Hub diffsettings files
+  for settings_file in ${BASE_COLLECTION_PATH}/commands/*-hub-diffsettings.log; do
+    if [ -f "$settings_file" ]; then
+      echo "Sanitizing Hub settings: $(basename $settings_file)"
+
+      temp_file="${settings_file}.tmp"
+      cp "$settings_file" "$temp_file"
+
+      # Sanitize Hub-specific sensitive settings
+      # PASSWORD in DATABASES dict
+      sed -i "/'PASSWORD':/,/, 'HOST':/{/'PASSWORD':/!{/, 'HOST':/ !s/.*/        '\''*************'\'',/}}" "$temp_file" 2>/dev/null || true
+
+      # SECRET_KEY
+      sed -i '/SECRET_KEY.*=/,/",$/{/SECRET_KEY.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # Move sanitized file back
+      mv "$temp_file" "$settings_file"
+      echo "Sanitized: $(basename $settings_file)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    fi
+  done
+
+  # Sanitize Gateway print_settings files
+  for settings_file in ${BASE_COLLECTION_PATH}/commands/*-gateway-print_settings.log; do
+    if [ -f "$settings_file" ]; then
+      echo "Sanitizing Gateway settings: $(basename $settings_file)"
+
+      temp_file="${settings_file}.tmp"
+      cp "$settings_file" "$temp_file"
+
+      # Sanitize Gateway-specific sensitive settings (same patterns as Controller)
+      # SECRET_KEY
+      sed -i '/SECRET_KEY.*=/,/",$/{/SECRET_KEY.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # EMAIL_HOST_PASSWORD
+      sed -i '/EMAIL_HOST_PASSWORD.*=/,/",$/{/EMAIL_HOST_PASSWORD.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # PASSWORD in DATABASES dict
+      sed -i "/'PASSWORD':/,/, 'HOST':/{/'PASSWORD':/!{/, 'HOST':/ !s/.*/        '\''*************'\'',/}}" "$temp_file" 2>/dev/null || true
+
+      # Move sanitized file back
+      mv "$temp_file" "$settings_file"
+      echo "Sanitized: $(basename $settings_file)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    fi
+  done
+
+  # Sanitize EDA diffsettings files
+  for settings_file in ${BASE_COLLECTION_PATH}/commands/*-eda-diffsettings.log; do
+    if [ -f "$settings_file" ]; then
+      echo "Sanitizing EDA settings: $(basename $settings_file)"
+
+      temp_file="${settings_file}.tmp"
+      cp "$settings_file" "$temp_file"
+
+      # Sanitize EDA-specific sensitive settings
+      # PG_NOTIFY_DSN
+      sed -i '/PG_NOTIFY_DSN.*=/,/",$/{/PG_NOTIFY_DSN.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # PG_NOTIFY_DSN_SERVER
+      sed -i '/PG_NOTIFY_DSN_SERVER.*=/,/",$/{/PG_NOTIFY_DSN_SERVER.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # REDIS_USER_PASSWORD
+      sed -i '/REDIS_USER_PASSWORD.*=/,/",$/{/REDIS_USER_PASSWORD.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # DATABASES (entire dict)
+      sed -i '/DATABASES.*=/,/",$/{/DATABASES.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # RQ_QUEUES (entire dict)
+      sed -i '/RQ_QUEUES.*=/,/",$/{/RQ_QUEUES.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # SECRET_KEY
+      sed -i '/SECRET_KEY.*=/,/",$/{/SECRET_KEY.*=/!{/",$/ !s/.*/    '\''*************'\''/}}' "$temp_file" 2>/dev/null || true
+
+      # SECRET_KEY in dict format
+      sed -i "/'SECRET_KEY':/,/, 'VALIDATE_HTTPS'/{/'SECRET_KEY':/!{/, 'VALIDATE_HTTPS'/ !s/.*/        '\''*************'\'',/}}" "$temp_file" 2>/dev/null || true
+
+      # PASSWORD in DATABASES dict
+      sed -i "/'PASSWORD':/,/, 'HOST':/{/'PASSWORD':/!{/, 'HOST':/ !s/.*/        '\''*************'\'',/}}" "$temp_file" 2>/dev/null || true
+
+      # Move sanitized file back
+      mv "$temp_file" "$settings_file"
+      echo "Sanitized: $(basename $settings_file)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    fi
+  done
+
+  echo "Sanitization complete" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 }
 
 # Call functions for each AAP namespace
@@ -503,6 +727,10 @@ if [ ! -z "$NS" ]; then
     collect_config_files $a || echo "Failed to collect config files for $a"
     collect_management_commands $a || echo "Failed to collect management commands for $a"
   done
+
+  # Sanitize sensitive values in settings command outputs
+  echo "Sanitizing sensitive values in collected settings..."
+  sanitize_settings || echo "Failed to sanitize settings, continuing..."
 else
   echo "No AAP namespaces found, skipping custom collection functions"
 fi
@@ -1211,6 +1439,16 @@ EOF
             display_name="$(echo "$filename" | sed -E 's/-awx-(task|web)-dbcheck\.log$/ - Database Check/') ($container_type)"
           elif [[ "$filename" == *"print_settings"* ]]; then
             display_name="$(echo "$filename" | sed -E 's/-awx-(task|web)-print_settings\.log$/ - Settings (print_settings)/') ($container_type)"
+          elif [[ "$filename" == *"list_instances"* ]]; then
+            display_name="$(echo "$filename" | sed -E 's/-awx-(task|web)-list_instances\.log$/ - Instance List/') ($container_type)"
+          elif [[ "$filename" == *"check_license"* ]]; then
+            display_name="$(echo "$filename" | sed -E 's/-awx-(task|web)-check_license\.log$/ - License Check/') ($container_type)"
+          elif [[ "$filename" == *"callback_receiver_status"* ]]; then
+            display_name="$(echo "$filename" | sed -E 's/-awx-(task|web)-callback_receiver_status\.log$/ - Callback Receiver Status/') ($container_type)"
+          elif [[ "$filename" == *"dispatcher_status"* ]]; then
+            display_name="$(echo "$filename" | sed -E 's/-awx-(task|web)-dispatcher_status\.log$/ - Dispatcher Status/') ($container_type)"
+          elif [[ "$filename" == *"check_db"* ]]; then
+            display_name="$(echo "$filename" | sed -E 's/-awx-(task|web)-check_db\.log$/ - Database Connection Check/') ($container_type)"
           fi
 
           echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
@@ -1237,8 +1475,18 @@ EOF
 
           # Create descriptive display names
           display_name="$filename"
-          if [[ "$filename" == *"showmigrations"* ]]; then
+          if [[ "$filename" == *"list_services"* ]]; then
+            display_name="$(echo "$filename" | sed 's/-gateway-list_services\.log$/ - Service List/')"
+          elif [[ "$filename" == *"check.log"* ]]; then
+            display_name="$(echo "$filename" | sed 's/-gateway-check\.log$/ - System Check/')"
+          elif [[ "$filename" == *"print_settings"* ]]; then
+            display_name="$(echo "$filename" | sed 's/-gateway-print_settings\.log$/ - Settings (print_settings)/')"
+          elif [[ "$filename" == *"inspectdb"* ]]; then
+            display_name="$(echo "$filename" | sed 's/-gateway-inspectdb\.log$/ - Database Inspection/')"
+          elif [[ "$filename" == *"showmigrations"* ]]; then
             display_name="$(echo "$filename" | sed 's/-gateway-showmigrations\.log$/ - Database Migrations/')"
+          elif [[ "$filename" == *"test"* ]]; then
+            display_name="$(echo "$filename" | sed 's/-gateway-test\.log$/ - Test Results/')"
           elif [[ "$filename" == *"version"* ]]; then
             display_name="$(echo "$filename" | sed 's/-gateway-version\.log$/ - Version Info/')"
           elif [[ "$filename" == *"dbcheck"* ]]; then
@@ -1271,10 +1519,10 @@ EOF
           display_name="$filename"
           if [[ "$filename" == *"showmigrations"* ]]; then
             display_name="$(echo "$filename" | sed 's/-hub-showmigrations\.log$/ - Database Migrations/')"
-          elif [[ "$filename" == *"status"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-hub-status\.log$/ - Status Check/')"
           elif [[ "$filename" == *"version"* ]]; then
             display_name="$(echo "$filename" | sed 's/-hub-version\.log$/ - Version Info/')"
+          elif [[ "$filename" == *"dbcheck"* ]]; then
+            display_name="$(echo "$filename" | sed 's/-hub-dbcheck\.log$/ - Database Check/')"
           elif [[ "$filename" == *"diffsettings"* ]]; then
             display_name="$(echo "$filename" | sed 's/-hub-diffsettings\.log$/ - Settings (diffsettings)/')"
           fi
@@ -1311,6 +1559,12 @@ EOF
             display_name="$(echo "$filename" | sed 's/-eda-dbcheck\.log$/ - Database Check/')"
           elif [[ "$filename" == *"diffsettings"* ]]; then
             display_name="$(echo "$filename" | sed 's/-eda-diffsettings\.log$/ - Settings (diffsettings)/')"
+          elif [[ "$filename" == *"check.log"* ]]; then
+            display_name="$(echo "$filename" | sed 's/-eda-check\.log$/ - System Check/')"
+          elif [[ "$filename" == *"test"* ]]; then
+            display_name="$(echo "$filename" | sed 's/-eda-test\.log$/ - Test Results/')"
+          elif [[ "$filename" == *"RBAC_checks"* ]]; then
+            display_name="$(echo "$filename" | sed 's/-eda-RBAC_checks\.log$/ - RBAC Checks/')"
           fi
 
           echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
