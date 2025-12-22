@@ -352,7 +352,12 @@ collect_management_commands() {
 
   # Collect from automation controller task pods
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=task -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-    echo "Collecting management commands from controller task pod: $pod"
+    # Check if pod is running
+    pod_phase=$(oc get pod $pod -n $namespace -o jsonpath='{.status.phase}' 2>/dev/null)
+    if [ "$pod_phase" != "Running" ]; then
+      echo "Skipping management commands for task pod $pod (status: $pod_phase)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      continue
+    fi
 
     # Get the task container name dynamically (it contains "-task" in the name)
     task_container=$(oc get pod $pod -n $namespace -o jsonpath='{.spec.containers[*].name}' 2>/dev/null | tr ' ' '\n' | grep -- '-task$' | head -1)
@@ -362,14 +367,16 @@ collect_management_commands() {
       continue
     fi
 
+    echo "Collecting management commands from controller task pod: $pod (container: $task_container)"
+
     # showmigrations
-    oc exec $pod -n $namespace -c $task_container -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c $task_container -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from task $pod (container: $task_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # version info
-    oc exec $pod -n $namespace -c $task_container -- awx-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-version.log" 2>/dev/null || echo "Failed to collect version from task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c $task_container -- awx-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-version.log" 2>/dev/null || echo "Failed to collect version from task $pod (container: $task_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # check database connectivity
-    oc exec $pod -n $namespace -c $task_container -- awx-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c $task_container -- awx-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-task-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from task $pod (container: $task_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # Note: list_settings command removed to avoid exposing sensitive configuration data
   done
@@ -378,7 +385,12 @@ collect_management_commands() {
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=automationcontroller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     # Check if this is a web pod (not task pod)
     if [[ "$pod" == *"web"* ]]; then
-      echo "Collecting management commands from controller web pod: $pod"
+      # Check if pod is running
+      pod_phase=$(oc get pod $pod -n $namespace -o jsonpath='{.status.phase}' 2>/dev/null)
+      if [ "$pod_phase" != "Running" ]; then
+        echo "Skipping management commands for web pod $pod (status: $pod_phase)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+        continue
+      fi
 
       # Get the web container name dynamically (it contains "-web" in the name)
       web_container=$(oc get pod $pod -n $namespace -o jsonpath='{.spec.containers[*].name}' 2>/dev/null | tr ' ' '\n' | grep -- '-web$' | head -1)
@@ -388,60 +400,83 @@ collect_management_commands() {
         continue
       fi
 
+      echo "Collecting management commands from controller web pod: $pod (container: $web_container)"
+
       # showmigrations
-      oc exec $pod -n $namespace -c $web_container -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      oc exec $pod -n $namespace -c $web_container -- awx-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from web $pod (container: $web_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
       # version info
-      oc exec $pod -n $namespace -c $web_container -- awx-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-version.log" 2>/dev/null || echo "Failed to collect version from web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      oc exec $pod -n $namespace -c $web_container -- awx-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-awx-web-version.log" 2>/dev/null || echo "Failed to collect version from web $pod (container: $web_container)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
     fi
   done
 
   # Collect from gateway pods
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=aap-gateway -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-    echo "Collecting management commands from gateway pod: $pod"
+    # Check if pod is running
+    pod_phase=$(oc get pod $pod -n $namespace -o jsonpath='{.status.phase}' 2>/dev/null)
+    if [ "$pod_phase" != "Running" ]; then
+      echo "Skipping management commands for gateway pod $pod (status: $pod_phase)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      continue
+    fi
+
+    echo "Collecting management commands from gateway pod: $pod (container: api)"
 
     # showmigrations
-    oc exec $pod -n $namespace -c api -- aap-gateway-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-gateway-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from gateway $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c api -- aap-gateway-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-gateway-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from gateway $pod (container: api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # version info
-    oc exec $pod -n $namespace -c api -- aap-gateway-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-gateway-version.log" 2>/dev/null || echo "Failed to collect version from gateway $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c api -- aap-gateway-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-gateway-version.log" 2>/dev/null || echo "Failed to collect version from gateway $pod (container: api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # check database connectivity
-    oc exec $pod -n $namespace -c api -- aap-gateway-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-gateway-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from gateway $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c api -- aap-gateway-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-gateway-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from gateway $pod (container: api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 
   # Collect from automation hub API pods
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/name=automationhub-api -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-    echo "Collecting management commands from hub API pod: $pod"
+    # Check if pod is running
+    pod_phase=$(oc get pod $pod -n $namespace -o jsonpath='{.status.phase}' 2>/dev/null)
+    if [ "$pod_phase" != "Running" ]; then
+      echo "Skipping management commands for hub API pod $pod (status: $pod_phase)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      continue
+    fi
+
+    echo "Collecting management commands from hub API pod: $pod (container: api)"
 
     # showmigrations
     oc exec $pod -n $namespace -c api -- pulpcore-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-showmigrations.log" 2>/dev/null || \
     oc exec $pod -n $namespace -c api -- python -m pulpcore.app.manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-showmigrations.log" 2>/dev/null || \
-    echo "Failed to collect showmigrations from hub $pod - management command not available" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    echo "Failed to collect showmigrations from hub $pod (container: api) - management command not available" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # status check
     oc exec $pod -n $namespace -c api -- pulpcore-manage status > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-status.log" 2>/dev/null || \
     oc exec $pod -n $namespace -c api -- python -m pulpcore.app.manage status > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-status.log" 2>/dev/null || \
-    echo "Failed to collect status from hub $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    echo "Failed to collect status from hub $pod (container: api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # version info
     oc exec $pod -n $namespace -c api -- pulpcore-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-version.log" 2>/dev/null || \
     oc exec $pod -n $namespace -c api -- python -m pulpcore.app.manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-hub-version.log" 2>/dev/null || \
-    echo "Failed to collect version from hub $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    echo "Failed to collect version from hub $pod (container: api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 
   # Collect from EDA pods
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=eda-api -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
-    echo "Collecting management commands from EDA pod: $pod"
+    # Check if pod is running
+    pod_phase=$(oc get pod $pod -n $namespace -o jsonpath='{.status.phase}' 2>/dev/null)
+    if [ "$pod_phase" != "Running" ]; then
+      echo "Skipping management commands for EDA pod $pod (status: $pod_phase)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      continue
+    fi
+
+    echo "Collecting management commands from EDA pod: $pod (container: eda-api)"
 
     # showmigrations
-    oc exec $pod -n $namespace -c eda-api -- aap-eda-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from EDA $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c eda-api -- aap-eda-manage showmigrations > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-showmigrations.log" 2>/dev/null || echo "Failed to collect showmigrations from EDA $pod (container: eda-api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # version info
-    oc exec $pod -n $namespace -c eda-api -- aap-eda-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-version.log" 2>/dev/null || echo "Failed to collect version from EDA $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c eda-api -- aap-eda-manage version > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-version.log" 2>/dev/null || echo "Failed to collect version from EDA $pod (container: eda-api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
 
     # check database connectivity
-    oc exec $pod -n $namespace -c eda-api -- aap-eda-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from EDA $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+    oc exec $pod -n $namespace -c eda-api -- aap-eda-manage check --database default > "${BASE_COLLECTION_PATH}/commands/${pod}-eda-dbcheck.log" 2>/dev/null || echo "Failed to collect database check from EDA $pod (container: eda-api)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 }
 
@@ -1146,14 +1181,22 @@ EOF
           filename=$(basename "$cmdfile")
           relative_path=$(echo "$cmdfile" | sed "s|${BASE_COLLECTION_PATH}/||")
 
-          # Create descriptive display names
+          # Create descriptive display names with container info
           display_name="$filename"
+          if [[ "$filename" == *"task"* ]]; then
+            container_type="task container"
+          elif [[ "$filename" == *"web"* ]]; then
+            container_type="web container"
+          else
+            container_type=""
+          fi
+
           if [[ "$filename" == *"showmigrations"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-awx.*/ - Database Migrations/')"
+            display_name="$(echo "$filename" | sed -E 's/-awx-(task|web)-showmigrations\.log$/ - Database Migrations/') ($container_type)"
           elif [[ "$filename" == *"version"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-awx.*/ - Version Info/')"
+            display_name="$(echo "$filename" | sed -E 's/-awx-(task|web)-version\.log$/ - Version Info/') ($container_type)"
           elif [[ "$filename" == *"dbcheck"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-awx.*/ - Database Check/')"
+            display_name="$(echo "$filename" | sed -E 's/-awx-(task|web)-dbcheck\.log$/ - Database Check/') ($container_type)"
           fi
 
           echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
@@ -1172,7 +1215,7 @@ EOF
       done
 
       if [ -n "$gateway_commands" ]; then
-        echo "            <h3>AAP Gateway Commands</h3>" >> $NAMESPACE_HTML
+        echo "            <h3>AAP Gateway Commands (api container)</h3>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
         for cmdfile in $(echo $gateway_commands | tr ' ' '\n' | sort); do
           filename=$(basename "$cmdfile")
@@ -1181,11 +1224,11 @@ EOF
           # Create descriptive display names
           display_name="$filename"
           if [[ "$filename" == *"showmigrations"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-gateway.*/ - Database Migrations/')"
+            display_name="$(echo "$filename" | sed 's/-gateway-showmigrations\.log$/ - Database Migrations/')"
           elif [[ "$filename" == *"version"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-gateway.*/ - Version Info/')"
+            display_name="$(echo "$filename" | sed 's/-gateway-version\.log$/ - Version Info/')"
           elif [[ "$filename" == *"dbcheck"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-gateway.*/ - Database Check/')"
+            display_name="$(echo "$filename" | sed 's/-gateway-dbcheck\.log$/ - Database Check/')"
           fi
 
           echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
@@ -1204,7 +1247,7 @@ EOF
       done
 
       if [ -n "$hub_commands" ]; then
-        echo "            <h3>Automation Hub Commands</h3>" >> $NAMESPACE_HTML
+        echo "            <h3>Automation Hub Commands (api container)</h3>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
         for cmdfile in $(echo $hub_commands | tr ' ' '\n' | sort); do
           filename=$(basename "$cmdfile")
@@ -1213,11 +1256,11 @@ EOF
           # Create descriptive display names
           display_name="$filename"
           if [[ "$filename" == *"showmigrations"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-hub.*/ - Database Migrations/')"
+            display_name="$(echo "$filename" | sed 's/-hub-showmigrations\.log$/ - Database Migrations/')"
           elif [[ "$filename" == *"status"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-hub.*/ - Status Check/')"
+            display_name="$(echo "$filename" | sed 's/-hub-status\.log$/ - Status Check/')"
           elif [[ "$filename" == *"version"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-hub.*/ - Version Info/')"
+            display_name="$(echo "$filename" | sed 's/-hub-version\.log$/ - Version Info/')"
           fi
 
           echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
@@ -1236,7 +1279,7 @@ EOF
       done
 
       if [ -n "$eda_commands" ]; then
-        echo "            <h3>Event-Driven Automation Commands</h3>" >> $NAMESPACE_HTML
+        echo "            <h3>Event-Driven Automation Commands (eda-api container)</h3>" >> $NAMESPACE_HTML
         echo "            <ul>" >> $NAMESPACE_HTML
         for cmdfile in $(echo $eda_commands | tr ' ' '\n' | sort); do
           filename=$(basename "$cmdfile")
@@ -1245,11 +1288,11 @@ EOF
           # Create descriptive display names
           display_name="$filename"
           if [[ "$filename" == *"showmigrations"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-eda.*/ - Database Migrations/')"
+            display_name="$(echo "$filename" | sed 's/-eda-showmigrations\.log$/ - Database Migrations/')"
           elif [[ "$filename" == *"version"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-eda.*/ - Version Info/')"
+            display_name="$(echo "$filename" | sed 's/-eda-version\.log$/ - Version Info/')"
           elif [[ "$filename" == *"dbcheck"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-eda.*/ - Database Check/')"
+            display_name="$(echo "$filename" | sed 's/-eda-dbcheck\.log$/ - Database Check/')"
           fi
 
           echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
