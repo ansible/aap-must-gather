@@ -56,10 +56,27 @@ must-gather.local.*/
 └── [standard must-gather files] # OpenShift cluster data
 ```
 
+## OMC Compatibility
+
+This must-gather tool is fully compatible with the [OpenShift Must-Gather Client (OMC)](https://github.com/gmeghnag/omc). You can use OMC to query the collected data using familiar `oc` commands:
+
+```bash
+# Point OMC to the must-gather output
+omc use must-gather.local.*/
+
+# Query AAP resources
+omc get automationcontroller -A
+omc get pods -n <aap-namespace> -o wide
+```
+
+For detailed information about OMC compatibility and AAP-specific features, see [docs/omc-compatibility.md](docs/omc-compatibility.md).
+
+## Documentation
+
+- **[docs/omc-compatibility.md](docs/omc-compatibility.md)** - OMC compatibility and additional features
+
 ## Troubleshooting
 
 - **Permission Issues**: Ensure your user has cluster-admin or appropriate RBAC permissions
 - **Image Pull Errors**: Verify the image is accessible from your cluster
 - **Missing Data**: Check that AAP is deployed and pods are running in expected namespaces
-
-For detailed enhancement information, see [ENHANCEMENT_SUMMARY.md](ENHANCEMENT_SUMMARY.md).

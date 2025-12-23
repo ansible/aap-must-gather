@@ -240,6 +240,249 @@ for b in $(oc get -A subs --no-headers=true --field-selector='metadata.name=ansi
   oc adm inspect -n $b subs --dest-dir=${BASE_COLLECTION_PATH}/must-gather
 done
 
+# Function to convert text files (logs, yaml, txt) to HTML for browser viewing
+convert_to_html() {
+  local input_file="$1"
+  local output_file="${input_file}.html"
+  local file_type="${input_file##*.}"
+  local filename=$(basename "$input_file")
+  local title="$filename"
+
+  # Determine syntax highlighting class based on file type
+  local syntax_class="language-plaintext"
+  case "$file_type" in
+    yaml|yml)
+      syntax_class="language-yaml"
+      ;;
+    log)
+      syntax_class="language-log"
+      ;;
+    txt)
+      syntax_class="language-plaintext"
+      ;;
+    conf)
+      syntax_class="language-nginx"
+      ;;
+    py)
+      syntax_class="language-python"
+      ;;
+  esac
+
+  # Create HTML file with proper formatting
+  cat > "$output_file" << 'EOF_HTML_HEADER'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FILE_TITLE</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            line-height: 1.6;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .header h1 {
+            font-size: 1.5em;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+        .header .file-info {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+        .controls {
+            background-color: #252526;
+            padding: 10px 20px;
+            border-bottom: 1px solid #3e3e42;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .btn {
+            background-color: #0e639c;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+        .btn:hover {
+            background-color: #1177bb;
+        }
+        .content {
+            padding: 20px;
+            overflow-x: auto;
+        }
+        pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        code {
+            font-family: inherit;
+        }
+        /* Syntax highlighting for YAML */
+        .language-yaml .key { color: #9cdcfe; }
+        .language-yaml .string { color: #ce9178; }
+        .language-yaml .comment { color: #6a9955; font-style: italic; }
+
+        /* Log highlighting */
+        .language-log .error { color: #f48771; font-weight: bold; }
+        .language-log .warning { color: #dcdcaa; }
+        .language-log .info { color: #4ec9b0; }
+        .language-log .timestamp { color: #b5cea8; }
+
+        /* Line numbers */
+        .line-numbers {
+            counter-reset: line;
+        }
+        .line-numbers .line::before {
+            counter-increment: line;
+            content: counter(line);
+            display: inline-block;
+            width: 3em;
+            padding-right: 1em;
+            margin-right: 1em;
+            text-align: right;
+            color: #858585;
+            border-right: 1px solid #3e3e42;
+        }
+        .line {
+            display: block;
+        }
+        .search-box {
+            padding: 5px 10px;
+            background-color: #3c3c3c;
+            border: 1px solid #555;
+            color: #d4d4d4;
+            border-radius: 4px;
+            font-size: 14px;
+            width: 300px;
+        }
+        .search-box:focus {
+            outline: none;
+            border-color: #0e639c;
+        }
+        .highlight-match {
+            background-color: #515c6a;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📄 FILE_TITLE</h1>
+        <div class="file-info">AAP Must-Gather Output</div>
+    </div>
+    <div class="controls">
+        <button class="btn" onclick="window.history.back()">← Back</button>
+        <button class="btn" onclick="downloadFile()">⬇ Download</button>
+        <button class="btn" onclick="toggleLineNumbers()">🔢 Toggle Line Numbers</button>
+        <input type="text" class="search-box" placeholder="Search in file..." onkeyup="searchInFile(this.value)">
+    </div>
+    <div class="content">
+        <pre id="file-content" class="SYNTAX_CLASS">
+EOF_HTML_HEADER
+
+  # Replace placeholders
+  sed -i "s/FILE_TITLE/$title/g" "$output_file"
+  sed -i "s/SYNTAX_CLASS/$syntax_class/g" "$output_file"
+
+  # Escape HTML entities and add content
+  if [ -f "$input_file" ]; then
+    sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g; s/'\''/\&#39;/g' "$input_file" >> "$output_file"
+  else
+    echo "File not found: $input_file" >> "$output_file"
+  fi
+
+  # Add closing HTML
+  cat >> "$output_file" << 'EOF_HTML_FOOTER'
+</pre>
+    </div>
+    <script>
+        let lineNumbersEnabled = false;
+
+        function toggleLineNumbers() {
+            const content = document.getElementById('file-content');
+            lineNumbersEnabled = !lineNumbersEnabled;
+
+            if (lineNumbersEnabled) {
+                const lines = content.textContent.split('\n');
+                content.innerHTML = lines.map(line =>
+                    '<span class="line">' + escapeHtml(line) + '</span>'
+                ).join('\n');
+                content.classList.add('line-numbers');
+            } else {
+                const text = content.textContent;
+                content.textContent = text;
+                content.classList.remove('line-numbers');
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function downloadFile() {
+            const filename = 'FILE_TITLE'.replace('.html', '');
+            const content = document.getElementById('file-content').textContent;
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }
+
+        function searchInFile(query) {
+            const content = document.getElementById('file-content');
+            const text = content.textContent;
+
+            if (!query) {
+                content.textContent = text;
+                return;
+            }
+
+            const regex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+            const highlighted = text.replace(regex, match =>
+                '<span class="highlight-match">' + escapeHtml(match) + '</span>'
+            );
+            content.innerHTML = highlighted;
+        }
+    </script>
+</body>
+</html>
+EOF_HTML_FOOTER
+
+  # Fix the download filename in the JavaScript
+  sed -i "s/FILE_TITLE/$title/g" "$output_file"
+}
+
 # Function to collect initContainer logs
 collect_init_container_logs() {
   local namespace=$1
@@ -1048,13 +1291,6 @@ extract_aap_operator_summary() {
       channel=$(grep "^  channel:" "$subscription_file" | awk '{print $2}' || echo "Unknown")
       source=$(grep "^  source:" "$subscription_file" | awk '{print $2}' || echo "Unknown")
 
-      # Determine if cluster-scoped or namespace-scoped based on channel pattern
-      scope="Namespace-scoped"
-      if [[ "$channel" == *"stable"* ]] || [[ "$channel" == *"fast"* ]] || [[ "$channel" == *"candidate"* ]]; then
-        scope="Namespace-scoped"
-      fi
-      # Note: In practice, AAP operator is typically namespace-scoped, but we can extend this logic
-
       # Get installed CSV version
       csv_version="Unknown"
       installed_csv=$(grep "^  installedCSV:" "$subscription_file" | awk '{print $2}' || echo "")
@@ -1062,11 +1298,21 @@ extract_aap_operator_summary() {
         csv_version=$(echo "$installed_csv" | sed 's/aap-operator\.v//' || echo "Unknown")
       fi
 
-      # Look for CSV file to get more details
+      # Look for CSV file to get more details and determine scope
       csv_file="$ns_dir/clusterserviceversions/$installed_csv.yaml"
       csv_display_name="AAP Operator"
+      scope="Namespace-scoped"
+
       if [ -f "$csv_file" ]; then
         csv_display_name=$(grep "^    displayName:" "$csv_file" | head -1 | sed 's/^    displayName: //' | tr -d '"' || echo "AAP Operator")
+
+        # Determine scope by checking installModes in CSV
+        # Look for "type: AllNamespaces" with "supported: true" to identify cluster-scoped
+        if grep -A 1 "type: AllNamespaces" "$csv_file" | grep -q "supported: true"; then
+          scope="Cluster-scoped"
+        else
+          scope="Namespace-scoped"
+        fi
       fi
 
       # Count AAP custom resources in this namespace
@@ -1211,6 +1457,12 @@ generate_namespace_pages() {
         th {
             background-color: #f2f2f2;
         }
+        .namespace-scoped {
+            background-color: #e8f5e8;
+        }
+        .cluster-scoped {
+            background-color: #e8f0ff;
+        }
     </style>
 </head>
 <body>
@@ -1220,6 +1472,16 @@ generate_namespace_pages() {
         <div class="header">
             <h1>Namespace: $namespace</h1>
             <p>Detailed resources and logs for AAP components in this namespace</p>
+        </div>
+
+        <div class="section important">
+            <h2>🚀 Quick Access</h2>
+            <p>Browse organized views of namespace resources:</p>
+            <ul>
+                <li><a href="../namespaces/$namespace/logs/"><strong>Pod Logs</strong></a> - Organized by pod and container</li>
+                <li><a href="../namespaces/$namespace/configs/"><strong>Configuration Files</strong></a> - Extracted configs from pods</li>
+                <li><a href="../namespaces/$namespace/commands/"><strong>Management Commands</strong></a> - Django/pulpcore command outputs</li>
+            </ul>
         </div>
 EOF
 
@@ -1307,16 +1569,30 @@ EOF
 
     # Check for subscription information
     subscription_file="$ns_dir/operators.coreos.com/subscriptions/ansible-automation-platform-operator.yaml"
+    operator_scope="Unknown"
     if [ -f "$subscription_file" ]; then
       channel=$(grep "^  channel:" "$subscription_file" | awk '{print $2}' || echo "Unknown")
       source=$(grep "^  source:" "$subscription_file" | awk '{print $2}' || echo "Unknown")
       installed_csv=$(grep "^  installedCSV:" "$subscription_file" | awk '{print $2}' || echo "Unknown")
+
+      # Determine operator scope from CSV file
+      csv_file="$ns_dir/operators.coreos.com/clusterserviceversions/$installed_csv.yaml"
+      operator_scope="Namespace-scoped"
+      if [ -f "$csv_file" ]; then
+        # Check installModes in CSV to determine scope
+        if grep -A 1 "type: AllNamespaces" "$csv_file" | grep -q "supported: true"; then
+          operator_scope="Cluster-scoped"
+        else
+          operator_scope="Namespace-scoped"
+        fi
+      fi
 
       echo "            <table>" >> $NAMESPACE_HTML
       echo "                <tr><th>Property</th><th>Value</th></tr>" >> $NAMESPACE_HTML
       echo "                <tr><td>Channel</td><td>$channel</td></tr>" >> $NAMESPACE_HTML
       echo "                <tr><td>Source</td><td>$source</td></tr>" >> $NAMESPACE_HTML
       echo "                <tr><td>Installed CSV</td><td>$installed_csv</td></tr>" >> $NAMESPACE_HTML
+      echo "                <tr><td>Scope</td><td>$operator_scope</td></tr>" >> $NAMESPACE_HTML
       echo "            </table>" >> $NAMESPACE_HTML
 
       relative_sub_path=$(echo "$subscription_file" | sed "s|${BASE_COLLECTION_PATH}/||")
@@ -1326,6 +1602,64 @@ EOF
     fi
 
     echo "        </div>" >> $NAMESPACE_HTML
+
+    # Add AAP Operator Installations section for namespace-scoped installations
+    if [ "$operator_scope" = "Namespace-scoped" ] && [ -f "$subscription_file" ]; then
+      echo "        <div class=\"section\">" >> $NAMESPACE_HTML
+      echo "            <h2>AAP Operator Installation</h2>" >> $NAMESPACE_HTML
+      echo "            <p>Summary of AAP operator installation in this namespace:</p>" >> $NAMESPACE_HTML
+
+      # Get the operator summary data for this namespace
+      csv_version=$(echo "$installed_csv" | sed 's/aap-operator\.v//' || echo "Unknown")
+
+      # Count AAP custom resources in this namespace
+      aap_count=0
+      controller_count=0
+      hub_count=0
+      eda_count=0
+      lightspeed_count=0
+
+      if [ -d "$ns_dir/aap.ansible.com/ansibleautomationplatforms" ]; then
+        aap_count=$(find "$ns_dir/aap.ansible.com/ansibleautomationplatforms" -name "*.yaml" -type f | wc -l)
+      fi
+      if [ -d "$ns_dir/automationcontroller.ansible.com/automationcontrollers" ]; then
+        controller_count=$(find "$ns_dir/automationcontroller.ansible.com/automationcontrollers" -name "*.yaml" -type f | wc -l)
+      fi
+      if [ -d "$ns_dir/automationhub.ansible.com/automationhubs" ]; then
+        hub_count=$(find "$ns_dir/automationhub.ansible.com/automationhubs" -name "*.yaml" -type f | wc -l)
+      fi
+      if [ -d "$ns_dir/eda.ansible.com/edas" ]; then
+        eda_count=$(find "$ns_dir/eda.ansible.com/edas" -name "*.yaml" -type f | wc -l)
+      fi
+      if [ -d "$ns_dir/lightspeed.ansible.com/ansiblelightspeeds" ]; then
+        lightspeed_count=$(find "$ns_dir/lightspeed.ansible.com/ansiblelightspeeds" -name "*.yaml" -type f | wc -l)
+      fi
+
+      echo "            <table>" >> $NAMESPACE_HTML
+      echo "                <tr>" >> $NAMESPACE_HTML
+      echo "                    <th>Channel</th>" >> $NAMESPACE_HTML
+      echo "                    <th>Scope</th>" >> $NAMESPACE_HTML
+      echo "                    <th>Version</th>" >> $NAMESPACE_HTML
+      echo "                    <th>AAP</th>" >> $NAMESPACE_HTML
+      echo "                    <th>Controller</th>" >> $NAMESPACE_HTML
+      echo "                    <th>Hub</th>" >> $NAMESPACE_HTML
+      echo "                    <th>EDA</th>" >> $NAMESPACE_HTML
+      echo "                    <th>Lightspeed</th>" >> $NAMESPACE_HTML
+      echo "                </tr>" >> $NAMESPACE_HTML
+      echo "                <tr class=\"namespace-scoped\">" >> $NAMESPACE_HTML
+      echo "                    <td>$channel</td>" >> $NAMESPACE_HTML
+      echo "                    <td>$operator_scope</td>" >> $NAMESPACE_HTML
+      echo "                    <td>$csv_version</td>" >> $NAMESPACE_HTML
+      echo "                    <td>$aap_count</td>" >> $NAMESPACE_HTML
+      echo "                    <td>$controller_count</td>" >> $NAMESPACE_HTML
+      echo "                    <td>$hub_count</td>" >> $NAMESPACE_HTML
+      echo "                    <td>$eda_count</td>" >> $NAMESPACE_HTML
+      echo "                    <td>$lightspeed_count</td>" >> $NAMESPACE_HTML
+      echo "                </tr>" >> $NAMESPACE_HTML
+      echo "            </table>" >> $NAMESPACE_HTML
+      echo "            <p><em>Scope is determined by the operator's installModes. Numbers indicate count of custom resources of each type.</em></p>" >> $NAMESPACE_HTML
+      echo "        </div>" >> $NAMESPACE_HTML
+    fi
 
     # Add Pod Status section
     echo "        <div class=\"section\">" >> $NAMESPACE_HTML
@@ -1423,7 +1757,7 @@ EOF
             display_name="$operator_type - $container_name ($log_type)"
           fi
 
-          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          echo "                <li><a href=\"../$relative_path.html\">$display_name</a></li>" >> $NAMESPACE_HTML
           found_operator_logs=true
         done
         echo "            </ul>" >> $NAMESPACE_HTML
@@ -1462,7 +1796,7 @@ EOF
             display_name="$filename"
           fi
 
-          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          echo "                <li><a href=\"../$relative_path.html\">$display_name</a></li>" >> $NAMESPACE_HTML
           found_container_logs=true
         done
         echo "            </ul>" >> $NAMESPACE_HTML
@@ -1531,7 +1865,7 @@ EOF
             display_name="$(echo "$filename" | sed -E 's/-awx-(task|web)-check_db\.log$/ - Database Connection Check/') ($container_type)"
           fi
 
-          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          echo "                <li><a href=\"../$relative_path.html\">$display_name</a></li>" >> $NAMESPACE_HTML
           found_commands=true
         done
         echo "            </ul>" >> $NAMESPACE_HTML
@@ -1573,7 +1907,7 @@ EOF
             display_name="$(echo "$filename" | sed 's/-gateway-version\.log$/ - Version Info/')"
           fi
 
-          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          echo "                <li><a href=\"../$relative_path.html\">$display_name</a></li>" >> $NAMESPACE_HTML
           found_commands=true
         done
         echo "            </ul>" >> $NAMESPACE_HTML
@@ -1607,7 +1941,7 @@ EOF
             display_name="$(echo "$filename" | sed 's/-hub-diffsettings\.log$/ - Settings (diffsettings)/')"
           fi
 
-          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          echo "                <li><a href=\"../$relative_path.html\">$display_name</a></li>" >> $NAMESPACE_HTML
           found_commands=true
         done
         echo "            </ul>" >> $NAMESPACE_HTML
@@ -1647,7 +1981,7 @@ EOF
             display_name="$(echo "$filename" | sed 's/-eda-RBAC_checks\.log$/ - RBAC Checks/')"
           fi
 
-          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          echo "                <li><a href=\"../$relative_path.html\">$display_name</a></li>" >> $NAMESPACE_HTML
           found_commands=true
         done
         echo "            </ul>" >> $NAMESPACE_HTML
@@ -1697,7 +2031,7 @@ EOF
             display_name="$(echo "$filename" | sed 's/-redis.conf/ - Redis Configuration/')"
           fi
 
-          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          echo "                <li><a href=\"../$relative_path.html\">$display_name</a></li>" >> $NAMESPACE_HTML
           found_configs=true
         done
         echo "            </ul>" >> $NAMESPACE_HTML
@@ -1733,7 +2067,7 @@ EOF
             display_name="$(echo "$filename" | sed 's/-.*-tower_settings.py/ - Tower Settings/')"
           fi
 
-          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          echo "                <li><a href=\"../$relative_path.html\">$display_name</a></li>" >> $NAMESPACE_HTML
           found_configs=true
         done
         echo "            </ul>" >> $NAMESPACE_HTML
@@ -1763,7 +2097,7 @@ EOF
             display_name="$(echo "$filename" | sed 's/-.*-pulp_settings.py/ - Pulp Settings/')"
           fi
 
-          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          echo "                <li><a href=\"../$relative_path.html\">$display_name</a></li>" >> $NAMESPACE_HTML
           found_configs=true
         done
         echo "            </ul>" >> $NAMESPACE_HTML
@@ -1817,7 +2151,7 @@ EOF
 
           display_name="$(echo "$filename" | sed 's/-redis.conf/ - Redis Configuration/')"
 
-          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          echo "                <li><a href=\"../$relative_path.html\">$display_name</a></li>" >> $NAMESPACE_HTML
           found_configs=true
         done
         echo "            </ul>" >> $NAMESPACE_HTML
@@ -1829,6 +2163,43 @@ EOF
       echo "            <p><strong>Note:</strong> Configuration files are collected from running AAP component pods. If no configs are shown, the components may not be running or accessible.</p>" >> $NAMESPACE_HTML
     fi
 
+    echo "        </div>" >> $NAMESPACE_HTML
+
+    # Add Kubernetes Resources section
+    echo "        <div class=\"section\">" >> $NAMESPACE_HTML
+    echo "            <h2>Kubernetes Resources</h2>" >> $NAMESPACE_HTML
+    echo "            <p>Status and configuration of Kubernetes resources in this namespace:</p>" >> $NAMESPACE_HTML
+    echo "            <ul>" >> $NAMESPACE_HTML
+
+    # Check if namespace-specific resource files exist
+    if [ -f "${BASE_COLLECTION_PATH}/resources/pvcs.log" ]; then
+      echo "                <li><a href=\"../resources/pvcs.log.html#$namespace\">PVC Status</a></li>" >> $NAMESPACE_HTML
+    fi
+    if [ -f "${BASE_COLLECTION_PATH}/resources/deployments.log" ]; then
+      echo "                <li><a href=\"../resources/deployments.log.html#$namespace\">Deployments</a></li>" >> $NAMESPACE_HTML
+    fi
+    if [ -f "${BASE_COLLECTION_PATH}/resources/services.log" ]; then
+      echo "                <li><a href=\"../resources/services.log.html#$namespace\">Services</a></li>" >> $NAMESPACE_HTML
+    fi
+    if [ -f "${BASE_COLLECTION_PATH}/resources/routes.log" ]; then
+      echo "                <li><a href=\"../resources/routes.log.html#$namespace\">Routes</a></li>" >> $NAMESPACE_HTML
+    fi
+    if [ -f "${BASE_COLLECTION_PATH}/resources/configmaps.log" ]; then
+      echo "                <li><a href=\"../resources/configmaps.log.html#$namespace\">ConfigMaps</a></li>" >> $NAMESPACE_HTML
+    fi
+    if [ -f "${BASE_COLLECTION_PATH}/resources/secrets.log" ]; then
+      echo "                <li><a href=\"../resources/secrets.log.html#$namespace\">Secrets</a></li>" >> $NAMESPACE_HTML
+    fi
+    if [ -f "${BASE_COLLECTION_PATH}/resources/ingress.log" ]; then
+      echo "                <li><a href=\"../resources/ingress.log.html#$namespace\">Ingress</a></li>" >> $NAMESPACE_HTML
+    fi
+
+    # Link to pod status for this namespace
+    if [ -f "${BASE_COLLECTION_PATH}/pod-status/${namespace}-pods.log" ]; then
+      echo "                <li><a href=\"../pod-status/${namespace}-pods.log.html\">Pod Status</a></li>" >> $NAMESPACE_HTML
+    fi
+
+    echo "            </ul>" >> $NAMESPACE_HTML
     echo "        </div>" >> $NAMESPACE_HTML
 
     # Add Raw Resources section
@@ -1952,31 +2323,55 @@ generate_index_html() {
         </div>
 
         <div class="nav-menu">
+            <a href="#summary">Summary</a>
             <a href="#aap-summary">AAP Installations</a>
-            <a href="#namespaces">Namespace Details</a>
-            <a href="#summary">Reports</a>
-            <a href="#resources">Resources</a>
-            <a href="#cluster">Cluster Info</a>
+            <a href="#operators">Operators</a>
+            <a href="#namespaces">Namespaces</a>
+            <a href="#resources">Cluster Resources</a>
+            <a href="#cluster">Namespace Resources</a>
         </div>
 
         <div class="section important" id="summary">
             <h2>📊 Summary Reports</h2>
             <p>Start here for a high-level overview of your AAP deployment:</p>
             <ul>
-                <li><a href="reports/summary-report.html"><strong>Comprehensive Summary Report</strong></a> - Version info, error analysis, and key findings</li>
+                <li><a href="summary/summary-report.html"><strong>HTML Summary Report</strong></a> - Version info, error analysis, and key findings</li>
             </ul>
         </div>
 
-        <div class="section" id="aap-summary">
-            <h2>AAP Operator Installations</h2>
-            <p>Summary of AAP operator installations and their versions per namespace:</p>
+        <div class="section" id="operators">
+            <h2>🔧 Operator Information</h2>
+            <p>Detailed operator installation and configuration:</p>
+            <ul>
+                <li><a href="operators/csv.yaml.html"><strong>ClusterServiceVersions</strong></a> - Operator versions and capabilities</li>
+                <li><a href="operators/subscriptions.yaml.html"><strong>Subscriptions</strong></a> - Operator subscription details</li>
+                <li><a href="operators/installplans.yaml.html"><strong>InstallPlans</strong></a> - Operator installation plans</li>
+                <li><a href="operators/pods.yaml.html"><strong>Operator Pods</strong></a> - Running operator pod information</li>
+            </ul>
+        </div>
 EOF
 
   # Get operator summary information
   OPERATOR_SUMMARY_FILE=$(extract_aap_operator_summary)
 
+  # Check if there are any cluster-scoped installations
+  has_cluster_scoped=false
   if [ -f "$OPERATOR_SUMMARY_FILE" ] && [ -s "$OPERATOR_SUMMARY_FILE" ]; then
+    while IFS='|' read namespace channel scope csv_version csv_display_name aap_count controller_count hub_count eda_count lightspeed_count; do
+      if [ "$scope" = "Cluster-scoped" ]; then
+        has_cluster_scoped=true
+        break
+      fi
+    done < "$OPERATOR_SUMMARY_FILE"
+  fi
+
+  # Only show AAP Operator Installations section on index.html if there are cluster-scoped installations
+  if [ "$has_cluster_scoped" = true ]; then
     cat >> $INDEX_FILE << 'EOF'
+
+        <div class="section" id="aap-summary">
+            <h2>AAP Operator Installations</h2>
+            <p>Summary of AAP operator installations and their versions per namespace:</p>
             <table>
                 <tr>
                     <th>Namespace</th>
@@ -1991,35 +2386,29 @@ EOF
                 </tr>
 EOF
 
-    # Process each operator installation
+    # Process each operator installation - only show cluster-scoped ones
     while IFS='|' read namespace channel scope csv_version csv_display_name aap_count controller_count hub_count eda_count lightspeed_count; do
-      scope_class=""
       if [ "$scope" = "Cluster-scoped" ]; then
         scope_class="cluster-scoped"
-      else
-        scope_class="namespace-scoped"
-      fi
 
-      echo "                <tr class=\"$scope_class\">" >> $INDEX_FILE
-      echo "                    <td><strong>$namespace</strong></td>" >> $INDEX_FILE
-      echo "                    <td>$channel</td>" >> $INDEX_FILE
-      echo "                    <td>$scope</td>" >> $INDEX_FILE
-      echo "                    <td>$csv_version</td>" >> $INDEX_FILE
-      echo "                    <td>$aap_count</td>" >> $INDEX_FILE
-      echo "                    <td>$controller_count</td>" >> $INDEX_FILE
-      echo "                    <td>$hub_count</td>" >> $INDEX_FILE
-      echo "                    <td>$eda_count</td>" >> $INDEX_FILE
-      echo "                    <td>$lightspeed_count</td>" >> $INDEX_FILE
-      echo "                </tr>" >> $INDEX_FILE
+        echo "                <tr class=\"$scope_class\">" >> $INDEX_FILE
+        echo "                    <td><strong>$namespace</strong></td>" >> $INDEX_FILE
+        echo "                    <td>$channel</td>" >> $INDEX_FILE
+        echo "                    <td>$scope</td>" >> $INDEX_FILE
+        echo "                    <td>$csv_version</td>" >> $INDEX_FILE
+        echo "                    <td>$aap_count</td>" >> $INDEX_FILE
+        echo "                    <td>$controller_count</td>" >> $INDEX_FILE
+        echo "                    <td>$hub_count</td>" >> $INDEX_FILE
+        echo "                    <td>$eda_count</td>" >> $INDEX_FILE
+        echo "                    <td>$lightspeed_count</td>" >> $INDEX_FILE
+        echo "                </tr>" >> $INDEX_FILE
+      fi
     done < "$OPERATOR_SUMMARY_FILE"
 
     cat >> $INDEX_FILE << 'EOF'
             </table>
-            <p><em>Scope is determined by the operator channel. Numbers indicate count of custom resources of each type.</em></p>
-EOF
-  else
-    cat >> $INDEX_FILE << 'EOF'
-            <p><em>No AAP operator installations found in the collected data.</em></p>
+            <p><em>Scope is determined by the operator's installModes. Numbers indicate count of custom resources of each type.</em></p>
+        </div>
 EOF
   fi
 
@@ -2027,7 +2416,6 @@ EOF
   rm -f "$OPERATOR_SUMMARY_FILE"
 
   cat >> $INDEX_FILE << 'EOF'
-        </div>
 
         <div class="section" id="namespaces">
             <h2>Namespace Details</h2>
@@ -2050,27 +2438,45 @@ EOF
         </div>
 
         <div class="section" id="resources">
-            <h2>Kubernetes Resources</h2>
-            <p>Status and configuration of Kubernetes resources:</p>
+            <h2>☁️ Cluster Resources</h2>
+            <p>Cluster-scoped resources and information:</p>
+
+            <h3>Cluster Information</h3>
             <ul>
-                <li><a href="pvc-status.log">PVC Status</a></li>
-                <li><a href="deployments.log">Deployments</a></li>
-                <li><a href="services.log">Services</a></li>
-                <li><a href="routes.log">Routes</a></li>
-                <li><a href="configmaps.log">ConfigMaps</a></li>
-                <li><a href="secrets.log">Secrets</a></li>
-                <li><a href="ingress.log">Ingress</a></li>
+                <li><a href="cluster/version.yaml.html">OpenShift Version</a> - Cluster version details</li>
+                <li><a href="summary/nodes.txt.html">Node Information</a> - Cluster node details</li>
+                <li><a href="cluster/api-discovery.yaml.html">API Discovery</a> - Available API resources</li>
+                <li><a href="summary/events-all.txt.html">All Events</a> - Complete event log from all AAP namespaces</li>
+                <li><a href="summary/events-warnings.txt.html">Warning Events</a> - Filtered warning events only</li>
+            </ul>
+
+            <h3>Custom Resource Definitions</h3>
+            <ul>
+                <li><a href="crds/all-crds.txt.html">All CRDs List</a> - Consolidated list of all AAP CRDs</li>
+                <li><a href="crds/definitions/">CRD Definitions</a> - Individual CRD YAML files</li>
+            </ul>
+
+            <h3>Cluster Diagnostics</h3>
+            <ul>
+                <li><a href="cluster/master-dmesg.log.html">Master Node Messages</a> - Kernel messages from master nodes</li>
+                <li><a href="cluster/worker-dmesg.log.html">Worker Node Messages</a> - Kernel messages from worker nodes</li>
+                <li><a href="gather-aap.log.html">Gather Execution Log</a> - Must-gather collection log</li>
             </ul>
         </div>
 
         <div class="section" id="cluster">
-            <h2>Cluster Information</h2>
-            <p>OpenShift cluster and node information:</p>
+            <h2>📦 Namespace Resources</h2>
+            <p>Quick status views of namespace-scoped Kubernetes resources across all AAP namespaces:</p>
             <ul>
-                <li><a href="gather-aap.log">Gather Log</a></li>
-                <li><a href="master_dmesg.log">Master Node Messages</a></li>
-                <li><a href="worker_dmesg.log">Worker Node Messages</a></li>
+                <li><a href="resources/pvcs.log.html">PVC Status</a></li>
+                <li><a href="resources/deployments.log.html">Deployments</a></li>
+                <li><a href="resources/services.log.html">Services</a></li>
+                <li><a href="resources/routes.log.html">Routes</a></li>
+                <li><a href="resources/configmaps.log.html">ConfigMaps</a></li>
+                <li><a href="resources/secrets.log.html">Secrets</a></li>
+                <li><a href="resources/pods/">Pod Status by Namespace</a></li>
             </ul>
+            <p><em>For namespace-specific resources, visit the individual <a href="#namespaces">Namespace Details</a> pages.</em></p>
         </div>
 
         <div class="section">
@@ -2156,6 +2562,323 @@ EOF
   echo "Index.html generated: $INDEX_FILE"
 }
 
+# ============================================================================
+# USER-FRIENDLY DIRECTORY STRUCTURE GENERATION
+# Creates organized views while preserving must-gather/ for OMC compatibility
+# ============================================================================
+
+# Function to create user-friendly directory structure
+create_user_friendly_structure() {
+  echo "Creating user-friendly directory structure..."
+
+  # Create top-level directories
+  mkdir -p "${BASE_COLLECTION_PATH}/summary"
+  mkdir -p "${BASE_COLLECTION_PATH}/operators"
+  mkdir -p "${BASE_COLLECTION_PATH}/cluster"
+  mkdir -p "${BASE_COLLECTION_PATH}/crds"
+  mkdir -p "${BASE_COLLECTION_PATH}/resources"
+
+  # ========================================
+  # 1. SUMMARY DIRECTORY
+  # ========================================
+  echo "Organizing summary information..."
+
+  # Move/copy summary report to summary directory (keep original for backward compat)
+  if [ -f "${BASE_COLLECTION_PATH}/reports/summary-report.html" ]; then
+    cp "${BASE_COLLECTION_PATH}/reports/summary-report.html" "${BASE_COLLECTION_PATH}/summary/summary-report.html"
+  fi
+
+  # Create text summary
+  cat > "${BASE_COLLECTION_PATH}/summary/summary.txt" << EOF
+AAP Must-Gather Summary
+Generated on: $(date)
+================================================================================
+
+NAMESPACES WITH AAP RESOURCES:
+EOF
+
+  # Add namespace list to summary
+  for ns in $NS; do
+    echo "  - $ns" >> "${BASE_COLLECTION_PATH}/summary/summary.txt"
+  done
+
+  # Collect all events from all AAP namespaces
+  echo "" >> "${BASE_COLLECTION_PATH}/summary/summary.txt"
+  echo "EVENTS SUMMARY:" >> "${BASE_COLLECTION_PATH}/summary/summary.txt"
+  echo "See events-all.txt and events-warnings.txt for detailed event information" >> "${BASE_COLLECTION_PATH}/summary/summary.txt"
+
+  # Create consolidated events files
+  > "${BASE_COLLECTION_PATH}/summary/events-all.txt"
+  > "${BASE_COLLECTION_PATH}/summary/events-warnings.txt"
+
+  for ns in $NS; do
+    echo "==============================================================================" >> "${BASE_COLLECTION_PATH}/summary/events-all.txt"
+    echo "NAMESPACE: $ns" >> "${BASE_COLLECTION_PATH}/summary/events-all.txt"
+    echo "==============================================================================" >> "${BASE_COLLECTION_PATH}/summary/events-all.txt"
+    oc get events -n $ns --sort-by='.lastTimestamp' >> "${BASE_COLLECTION_PATH}/summary/events-all.txt" 2>/dev/null || echo "No events found in namespace $ns" >> "${BASE_COLLECTION_PATH}/summary/events-all.txt"
+    echo "" >> "${BASE_COLLECTION_PATH}/summary/events-all.txt"
+
+    # Warning events only
+    echo "==============================================================================" >> "${BASE_COLLECTION_PATH}/summary/events-warnings.txt"
+    echo "NAMESPACE: $ns - WARNING EVENTS" >> "${BASE_COLLECTION_PATH}/summary/events-warnings.txt"
+    echo "==============================================================================" >> "${BASE_COLLECTION_PATH}/summary/events-warnings.txt"
+    oc get events -n $ns --field-selector type=Warning --sort-by='.lastTimestamp' >> "${BASE_COLLECTION_PATH}/summary/events-warnings.txt" 2>/dev/null || echo "No warning events found in namespace $ns" >> "${BASE_COLLECTION_PATH}/summary/events-warnings.txt"
+    echo "" >> "${BASE_COLLECTION_PATH}/summary/events-warnings.txt"
+  done
+
+  # Collect node information
+  echo "Collecting node information..."
+  oc get nodes -o wide > "${BASE_COLLECTION_PATH}/summary/nodes.txt" 2>/dev/null || echo "Failed to collect node information" > "${BASE_COLLECTION_PATH}/summary/nodes.txt"
+
+  # Copy namespace YAML for first AAP namespace (or all if multiple)
+  for ns in $NS; do
+    if [ -f "${BASE_COLLECTION_PATH}/must-gather/namespaces/${ns}/${ns}.yaml" ]; then
+      cp "${BASE_COLLECTION_PATH}/must-gather/namespaces/${ns}/${ns}.yaml" "${BASE_COLLECTION_PATH}/summary/namespace-${ns}.yaml"
+    fi
+  done
+
+  # ========================================
+  # 2. OPERATORS DIRECTORY
+  # ========================================
+  echo "Organizing operator information..."
+
+  # Collect operator information from all AAP namespaces
+  > "${BASE_COLLECTION_PATH}/operators/csv.yaml"
+  > "${BASE_COLLECTION_PATH}/operators/subscriptions.yaml"
+  > "${BASE_COLLECTION_PATH}/operators/installplans.yaml"
+  > "${BASE_COLLECTION_PATH}/operators/pods.yaml"
+
+  for ns in $NS; do
+    echo "---" >> "${BASE_COLLECTION_PATH}/operators/csv.yaml"
+    echo "# Namespace: $ns" >> "${BASE_COLLECTION_PATH}/operators/csv.yaml"
+    oc get csv -n $ns -o yaml >> "${BASE_COLLECTION_PATH}/operators/csv.yaml" 2>/dev/null || echo "# No CSV found in $ns" >> "${BASE_COLLECTION_PATH}/operators/csv.yaml"
+
+    echo "---" >> "${BASE_COLLECTION_PATH}/operators/subscriptions.yaml"
+    echo "# Namespace: $ns" >> "${BASE_COLLECTION_PATH}/operators/subscriptions.yaml"
+    oc get subscriptions -n $ns -o yaml >> "${BASE_COLLECTION_PATH}/operators/subscriptions.yaml" 2>/dev/null || echo "# No subscriptions found in $ns" >> "${BASE_COLLECTION_PATH}/operators/subscriptions.yaml"
+
+    echo "---" >> "${BASE_COLLECTION_PATH}/operators/installplans.yaml"
+    echo "# Namespace: $ns" >> "${BASE_COLLECTION_PATH}/operators/installplans.yaml"
+    oc get installplans -n $ns -o yaml >> "${BASE_COLLECTION_PATH}/operators/installplans.yaml" 2>/dev/null || echo "# No installplans found in $ns" >> "${BASE_COLLECTION_PATH}/operators/installplans.yaml"
+
+    echo "==============================================================================" >> "${BASE_COLLECTION_PATH}/operators/pods.yaml"
+    echo "# Namespace: $ns - Operator Pods" >> "${BASE_COLLECTION_PATH}/operators/pods.yaml"
+    echo "==============================================================================" >> "${BASE_COLLECTION_PATH}/operators/pods.yaml"
+    oc get pods -n $ns -l 'app.kubernetes.io/part-of in (aap-operator, ansible-automation-platform-operator)' -o yaml >> "${BASE_COLLECTION_PATH}/operators/pods.yaml" 2>/dev/null || echo "# No operator pods found in $ns" >> "${BASE_COLLECTION_PATH}/operators/pods.yaml"
+    echo "" >> "${BASE_COLLECTION_PATH}/operators/pods.yaml"
+  done
+
+  # ========================================
+  # 3. CLUSTER DIRECTORY
+  # ========================================
+  echo "Organizing cluster information..."
+
+  # Copy cluster version
+  if [ -f "${BASE_COLLECTION_PATH}/must-gather/cluster-scoped-resources/config.openshift.io/clusterversions/version.yaml" ]; then
+    cp "${BASE_COLLECTION_PATH}/must-gather/cluster-scoped-resources/config.openshift.io/clusterversions/version.yaml" "${BASE_COLLECTION_PATH}/cluster/version.yaml"
+  fi
+
+  # Move dmesg logs if they exist
+  if [ -f "${BASE_COLLECTION_PATH}/master_dmesg.log" ]; then
+    cp "${BASE_COLLECTION_PATH}/master_dmesg.log" "${BASE_COLLECTION_PATH}/cluster/master-dmesg.log"
+  fi
+  if [ -f "${BASE_COLLECTION_PATH}/worker_dmesg.log" ]; then
+    cp "${BASE_COLLECTION_PATH}/worker_dmesg.log" "${BASE_COLLECTION_PATH}/cluster/worker-dmesg.log"
+  fi
+
+  # Copy API discovery
+  if [ -f "${BASE_COLLECTION_PATH}/must-gather/aggregated-discovery-apis.yaml" ]; then
+    cp "${BASE_COLLECTION_PATH}/must-gather/aggregated-discovery-apis.yaml" "${BASE_COLLECTION_PATH}/cluster/api-discovery.yaml"
+  fi
+
+  # ========================================
+  # 4. CRDS DIRECTORY
+  # ========================================
+  echo "Organizing CRD information..."
+
+  mkdir -p "${BASE_COLLECTION_PATH}/crds/definitions"
+
+  # Create consolidated CRD list
+  > "${BASE_COLLECTION_PATH}/crds/all-crds.txt"
+  echo "AAP-Related Custom Resource Definitions" >> "${BASE_COLLECTION_PATH}/crds/all-crds.txt"
+  echo "========================================" >> "${BASE_COLLECTION_PATH}/crds/all-crds.txt"
+  echo "" >> "${BASE_COLLECTION_PATH}/crds/all-crds.txt"
+
+  # Copy CRD definitions and list them
+  CRD_PATH="${BASE_COLLECTION_PATH}/must-gather/cluster-scoped-resources/apiextensions.k8s.io/customresourcedefinitions"
+  if [ -d "$CRD_PATH" ]; then
+    for crd_file in "$CRD_PATH"/*.yaml; do
+      if [ -f "$crd_file" ]; then
+        crd_name=$(basename "$crd_file")
+        cp "$crd_file" "${BASE_COLLECTION_PATH}/crds/definitions/$crd_name"
+        echo "  - $crd_name" >> "${BASE_COLLECTION_PATH}/crds/all-crds.txt"
+      fi
+    done
+  fi
+
+  # ========================================
+  # 5. RESOURCES DIRECTORY (already exists, just organize)
+  # ========================================
+  echo "Organizing resource status files..."
+
+  # Move resource status files to resources directory if not already there
+  for resource_file in deployments.log services.log routes.log ingress.log configmaps.log secrets.log pvc-status.log; do
+    if [ -f "${BASE_COLLECTION_PATH}/$resource_file" ] && [ ! -f "${BASE_COLLECTION_PATH}/resources/$resource_file" ]; then
+      cp "${BASE_COLLECTION_PATH}/$resource_file" "${BASE_COLLECTION_PATH}/resources/$resource_file"
+    fi
+  done
+
+  # Move pod-status directory
+  if [ -d "${BASE_COLLECTION_PATH}/pod-status" ]; then
+    mkdir -p "${BASE_COLLECTION_PATH}/resources/pods"
+    cp -r "${BASE_COLLECTION_PATH}/pod-status"/* "${BASE_COLLECTION_PATH}/resources/pods/" 2>/dev/null || true
+  fi
+
+  echo "User-friendly directory structure created successfully"
+}
+
+# Function to create namespace-specific user-friendly structure
+create_namespace_structure() {
+  local namespace=$1
+  echo "Creating user-friendly structure for namespace: $namespace"
+
+  # Create namespace directory
+  mkdir -p "${BASE_COLLECTION_PATH}/namespaces/${namespace}"
+  mkdir -p "${BASE_COLLECTION_PATH}/namespaces/${namespace}/logs"
+  mkdir -p "${BASE_COLLECTION_PATH}/namespaces/${namespace}/configs"
+  mkdir -p "${BASE_COLLECTION_PATH}/namespaces/${namespace}/commands"
+
+  # ========================================
+  # ORGANIZE LOGS
+  # ========================================
+  # Create flattened log structure with symlinks to must-gather logs
+  MUST_GATHER_NS_PATH="${BASE_COLLECTION_PATH}/must-gather/namespaces/${namespace}"
+
+  if [ -d "$MUST_GATHER_NS_PATH/pods" ]; then
+    for pod_dir in "$MUST_GATHER_NS_PATH/pods"/*; do
+      if [ -d "$pod_dir" ]; then
+        pod_name=$(basename "$pod_dir")
+        mkdir -p "${BASE_COLLECTION_PATH}/namespaces/${namespace}/logs/${pod_name}"
+
+        # Find all container logs and create symlinks
+        find "$pod_dir" -type f -name "*.log" 2>/dev/null | while read log_file; do
+          # Extract container name and log type from path
+          # Path format: pods/<pod>/<container>/<container>/logs/<type>.log
+          container_path=$(echo "$log_file" | sed "s|$pod_dir/||" | sed 's|/logs/.*||')
+          container_name=$(basename "$container_path")
+          log_type=$(basename "$log_file" .log)
+
+          # Create descriptive filename
+          if [ "$log_type" = "current" ]; then
+            link_name="${container_name}.log"
+          elif [ "$log_type" = "previous" ]; then
+            link_name="${container_name}-previous.log"
+          elif [ "$log_type" = "previous.insecure" ]; then
+            link_name="${container_name}-previous-insecure.log"
+          else
+            link_name="${container_name}-${log_type}.log"
+          fi
+
+          # Create relative symlink
+          rel_path=$(realpath --relative-to="${BASE_COLLECTION_PATH}/namespaces/${namespace}/logs/${pod_name}" "$log_file")
+          ln -sf "$rel_path" "${BASE_COLLECTION_PATH}/namespaces/${namespace}/logs/${pod_name}/${link_name}" 2>/dev/null || true
+        done
+      fi
+    done
+  fi
+
+  # Also link logs from the flat logs directory at root
+  if [ -d "${BASE_COLLECTION_PATH}/logs" ]; then
+    for log_file in "${BASE_COLLECTION_PATH}/logs"/*; do
+      if [ -f "$log_file" ]; then
+        filename=$(basename "$log_file")
+        # Extract pod name (format: podname-containername-suffix.log)
+        # Check if this log belongs to this namespace by checking if pod exists in must-gather
+        pod_prefix=$(echo "$filename" | sed 's/-operator.*//' | sed 's/-init.*//' | sed 's/-previous.*//')
+
+        if [ -d "$MUST_GATHER_NS_PATH/pods/$pod_prefix"* ] 2>/dev/null; then
+          # Find the actual pod directory
+          for pod_dir in "$MUST_GATHER_NS_PATH/pods"/${pod_prefix}*; do
+            if [ -d "$pod_dir" ]; then
+              pod_name=$(basename "$pod_dir")
+              mkdir -p "${BASE_COLLECTION_PATH}/namespaces/${namespace}/logs/${pod_name}"
+
+              # Create symlink if not already exists
+              if [ ! -f "${BASE_COLLECTION_PATH}/namespaces/${namespace}/logs/${pod_name}/${filename}" ]; then
+                rel_path=$(realpath --relative-to="${BASE_COLLECTION_PATH}/namespaces/${namespace}/logs/${pod_name}" "$log_file")
+                ln -sf "$rel_path" "${BASE_COLLECTION_PATH}/namespaces/${namespace}/logs/${pod_name}/${filename}" 2>/dev/null || true
+              fi
+            fi
+          done
+        fi
+      fi
+    done
+  fi
+
+  # ========================================
+  # ORGANIZE CONFIGS
+  # ========================================
+  # Link config files from configs directory
+  if [ -d "${BASE_COLLECTION_PATH}/configs" ]; then
+    for config_file in "${BASE_COLLECTION_PATH}/configs"/*; do
+      if [ -f "$config_file" ]; then
+        filename=$(basename "$config_file")
+        # Extract pod name (format: podname-container-configname)
+        pod_name=$(echo "$filename" | cut -d'-' -f1-5)  # Adjust based on naming pattern
+
+        # Check if this config belongs to a pod in this namespace
+        if [ -d "$MUST_GATHER_NS_PATH/pods/$pod_name"* ] 2>/dev/null; then
+          for pod_dir in "$MUST_GATHER_NS_PATH/pods"/${pod_name}*; do
+            if [ -d "$pod_dir" ]; then
+              actual_pod_name=$(basename "$pod_dir")
+              mkdir -p "${BASE_COLLECTION_PATH}/namespaces/${namespace}/configs/${actual_pod_name}"
+
+              # Create symlink
+              rel_path=$(realpath --relative-to="${BASE_COLLECTION_PATH}/namespaces/${namespace}/configs/${actual_pod_name}" "$config_file")
+              ln -sf "$rel_path" "${BASE_COLLECTION_PATH}/namespaces/${namespace}/configs/${actual_pod_name}/${filename}" 2>/dev/null || true
+            fi
+          done
+        fi
+      fi
+    done
+  fi
+
+  # ========================================
+  # ORGANIZE COMMANDS
+  # ========================================
+  # Link command output files from commands directory
+  if [ -d "${BASE_COLLECTION_PATH}/commands" ]; then
+    # Create subdirectories for each component type
+    mkdir -p "${BASE_COLLECTION_PATH}/namespaces/${namespace}/commands/controller"
+    mkdir -p "${BASE_COLLECTION_PATH}/namespaces/${namespace}/commands/eda"
+    mkdir -p "${BASE_COLLECTION_PATH}/namespaces/${namespace}/commands/gateway"
+    mkdir -p "${BASE_COLLECTION_PATH}/namespaces/${namespace}/commands/hub"
+
+    for cmd_file in "${BASE_COLLECTION_PATH}/commands"/*; do
+      if [ -f "$cmd_file" ]; then
+        filename=$(basename "$cmd_file")
+
+        # Determine component type and create symlink
+        if [[ "$filename" == *"controller"* ]]; then
+          rel_path=$(realpath --relative-to="${BASE_COLLECTION_PATH}/namespaces/${namespace}/commands/controller" "$cmd_file")
+          ln -sf "$rel_path" "${BASE_COLLECTION_PATH}/namespaces/${namespace}/commands/controller/${filename}" 2>/dev/null || true
+        elif [[ "$filename" == *"eda"* ]]; then
+          rel_path=$(realpath --relative-to="${BASE_COLLECTION_PATH}/namespaces/${namespace}/commands/eda" "$cmd_file")
+          ln -sf "$rel_path" "${BASE_COLLECTION_PATH}/namespaces/${namespace}/commands/eda/${filename}" 2>/dev/null || true
+        elif [[ "$filename" == *"gateway"* ]]; then
+          rel_path=$(realpath --relative-to="${BASE_COLLECTION_PATH}/namespaces/${namespace}/commands/gateway" "$cmd_file")
+          ln -sf "$rel_path" "${BASE_COLLECTION_PATH}/namespaces/${namespace}/commands/gateway/${filename}" 2>/dev/null || true
+        elif [[ "$filename" == *"hub"* ]]; then
+          rel_path=$(realpath --relative-to="${BASE_COLLECTION_PATH}/namespaces/${namespace}/commands/hub" "$cmd_file")
+          ln -sf "$rel_path" "${BASE_COLLECTION_PATH}/namespaces/${namespace}/commands/hub/${filename}" 2>/dev/null || true
+        fi
+      fi
+    done
+  fi
+
+  echo "Namespace structure created for: $namespace"
+}
+
 # Copy assets directory if it exists
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -2171,7 +2894,96 @@ fi
 echo "Generating enhanced reports..."
 generate_summary_report || echo "Failed to generate summary report"
 generate_namespace_pages || echo "Failed to generate namespace pages"
+
+# Create user-friendly directory structure
+echo "Creating user-friendly directory structure..."
+create_user_friendly_structure || echo "Failed to create user-friendly structure"
+
+# Create namespace-specific structures
+if [ ! -z "$NS" ]; then
+  for ns in $NS; do
+    create_namespace_structure "$ns" || echo "Failed to create namespace structure for $ns"
+  done
+fi
+
+# Generate index.html (must be after user-friendly structure is created)
 generate_index_html || echo "Failed to generate index.html"
+
+# ============================================================================
+# Convert all text files to HTML for browser viewing
+# ============================================================================
+echo "Converting files to HTML for browser viewing..."
+
+# Convert log files
+if [ -d "${BASE_COLLECTION_PATH}/logs" ]; then
+  find "${BASE_COLLECTION_PATH}/logs" -type f -name "*.log" 2>/dev/null | while read logfile; do
+    convert_to_html "$logfile"
+  done
+fi
+
+if [ -d "${BASE_COLLECTION_PATH}/commands" ]; then
+  find "${BASE_COLLECTION_PATH}/commands" -type f -name "*.log" 2>/dev/null | while read logfile; do
+    convert_to_html "$logfile"
+  done
+fi
+
+if [ -d "${BASE_COLLECTION_PATH}/pod-status" ]; then
+  find "${BASE_COLLECTION_PATH}/pod-status" -type f -name "*.log" 2>/dev/null | while read logfile; do
+    convert_to_html "$logfile"
+  done
+fi
+
+if [ -d "${BASE_COLLECTION_PATH}/resources" ]; then
+  find "${BASE_COLLECTION_PATH}/resources" -type f -name "*.log" 2>/dev/null | while read logfile; do
+    convert_to_html "$logfile"
+  done
+fi
+
+if [ -d "${BASE_COLLECTION_PATH}/cluster" ]; then
+  find "${BASE_COLLECTION_PATH}/cluster" -type f -name "*.log" 2>/dev/null | while read logfile; do
+    convert_to_html "$logfile"
+  done
+fi
+
+# Convert gather-aap.log if it exists
+if [ -f "${BASE_COLLECTION_PATH}/gather-aap.log" ]; then
+  convert_to_html "${BASE_COLLECTION_PATH}/gather-aap.log"
+fi
+
+# Convert config files (.conf, .yml, .py)
+if [ -d "${BASE_COLLECTION_PATH}/configs" ]; then
+  find "${BASE_COLLECTION_PATH}/configs" -type f \( -name "*.conf" -o -name "*.yml" -o -name "*.py" \) 2>/dev/null | while read configfile; do
+    convert_to_html "$configfile"
+  done
+fi
+
+# Convert text files
+if [ -d "${BASE_COLLECTION_PATH}/summary" ]; then
+  find "${BASE_COLLECTION_PATH}/summary" -type f -name "*.txt" 2>/dev/null | while read txtfile; do
+    convert_to_html "$txtfile"
+  done
+fi
+
+if [ -d "${BASE_COLLECTION_PATH}/crds" ]; then
+  find "${BASE_COLLECTION_PATH}/crds" -type f -name "*.txt" 2>/dev/null | while read txtfile; do
+    convert_to_html "$txtfile"
+  done
+fi
+
+# Convert YAML files
+if [ -d "${BASE_COLLECTION_PATH}/operators" ]; then
+  find "${BASE_COLLECTION_PATH}/operators" -type f -name "*.yaml" 2>/dev/null | while read yamlfile; do
+    convert_to_html "$yamlfile"
+  done
+fi
+
+if [ -d "${BASE_COLLECTION_PATH}/cluster" ]; then
+  find "${BASE_COLLECTION_PATH}/cluster" -type f -name "*.yaml" 2>/dev/null | while read yamlfile; do
+    convert_to_html "$yamlfile"
+  done
+fi
+
+echo "HTML conversion completed."
 
 echo "Must-gather collection completed successfully!"
 echo "Enhanced features added:"
@@ -2184,7 +2996,13 @@ echo "- Error analysis and summary report"
 echo "- AAP operator installation summary"
 echo "- Namespace-specific detail pages"
 echo "- Restructured index.html for easy navigation"
+echo "- User-friendly directory structure (summary/, operators/, cluster/, namespaces/)"
+echo "- OMC-compatible must-gather/ structure preserved"
 echo ""
 echo "Open index.html in a web browser to view the AAP installation summary."
 echo "Click on namespace links for detailed resources and logs per namespace."
 echo "Configuration files from key containers are available in the configs/ directory."
+echo ""
+echo "For command-line analysis, use the omc tool:"
+echo "  omc use must-gather/"
+echo "  omc get pods -A"
