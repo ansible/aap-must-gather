@@ -2122,9 +2122,9 @@ EOF
           # Create descriptive display names
           display_name="$filename"
           if [[ "$filename" == *"nginx.conf"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-.*-nginx.conf/ - Nginx Configuration/')"
+            display_name="$(echo "$filename" | sed 's/-api-nginx.conf/ - Nginx Configuration/')"
           elif [[ "$filename" == *"eda_settings.py"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-.*-eda_settings.py/ - EDA Settings/')"
+            display_name="$(echo "$filename" | sed 's/-api-eda_settings.py/ - EDA Settings/')"
           fi
 
           echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
@@ -2200,15 +2200,10 @@ EOF
     fi
 
     echo "            </ul>" >> $NAMESPACE_HTML
-    echo "        </div>" >> $NAMESPACE_HTML
 
-    # Add Raw Resources section
-    echo "        <div class=\"section\">" >> $NAMESPACE_HTML
-    echo "            <h2>All Kubernetes Resources</h2>" >> $NAMESPACE_HTML
-    echo "            <p>Complete resource dumps for this namespace:</p>" >> $NAMESPACE_HTML
-
+    # Add note with link to browse all resources
     relative_ns_path=$(echo "$ns_dir" | sed "s|${BASE_COLLECTION_PATH}/||")
-    echo "            <p><a href=\"../$relative_ns_path/\">Browse All Resources for $namespace</a></p>" >> $NAMESPACE_HTML
+    echo "            <p class=\"note\" style=\"margin-top: 10px; padding: 10px; background-color: #f0f0f0; border-left: 4px solid #667eea;\"><strong>Note:</strong> For complete resource dumps, <a href=\"../$relative_ns_path/\">browse all resources for $namespace</a>.</p>" >> $NAMESPACE_HTML
 
     echo "        </div>" >> $NAMESPACE_HTML
 
