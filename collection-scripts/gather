@@ -368,7 +368,7 @@ convert_to_html() {
             border-right: 1px solid #3e3e42;
         }
         .line {
-            display: block;
+            display: inline;
         }
         .search-box {
             padding: 5px 10px;
@@ -387,6 +387,17 @@ convert_to_html() {
             background-color: #515c6a;
             border-radius: 2px;
         }
+        .highlight-current {
+            background-color: #f39c12;
+            color: #000;
+            border-radius: 2px;
+            font-weight: bold;
+        }
+        .search-info {
+            color: #d4d4d4;
+            font-size: 14px;
+            margin-left: 10px;
+        }
     </style>
 </head>
 <body>
@@ -398,7 +409,8 @@ convert_to_html() {
         <button class="btn" onclick="window.history.back()">← Back</button>
         <button class="btn" onclick="downloadFile()">⬇ Download</button>
         <button class="btn" onclick="toggleLineNumbers()">🔢 Toggle Line Numbers</button>
-        <input type="text" class="search-box" placeholder="Search in file..." onkeyup="searchInFile(this.value)">
+        <input type="text" class="search-box" id="search-input" placeholder="Search in file... (Press Enter to cycle)" onkeyup="handleSearch(event)">
+        <span class="search-info" id="search-info"></span>
     </div>
     <div class="content">
         <pre id="file-content" class="SYNTAX_CLASS">
@@ -421,6 +433,9 @@ EOF_HTML_HEADER
     </div>
     <script>
         let lineNumbersEnabled = false;
+        let searchMatches = [];
+        let currentMatchIndex = -1;
+        let originalContent = '';
 
         function toggleLineNumbers() {
             const content = document.getElementById('file-content');
@@ -436,6 +451,12 @@ EOF_HTML_HEADER
                 const text = content.textContent;
                 content.textContent = text;
                 content.classList.remove('line-numbers');
+            }
+
+            // Reapply search highlighting if there's an active search
+            const searchInput = document.getElementById('search-input');
+            if (searchInput && searchInput.value) {
+                performSearch(searchInput.value, false);
             }
         }
 
@@ -459,20 +480,136 @@ EOF_HTML_HEADER
             window.URL.revokeObjectURL(url);
         }
 
-        function searchInFile(query) {
+        function handleSearch(event) {
+            const query = event.target.value;
+
+            if (event.key === 'Enter') {
+                // Cycle to next match
+                if (searchMatches.length > 0) {
+                    cycleToNextMatch();
+                }
+            } else {
+                // Perform new search
+                performSearch(query, true);
+            }
+        }
+
+        function performSearch(query, resetIndex) {
             const content = document.getElementById('file-content');
-            const text = content.textContent;
+            const searchInfo = document.getElementById('search-info');
+
+            if (!originalContent) {
+                originalContent = content.textContent;
+            }
 
             if (!query) {
-                content.textContent = text;
+                content.textContent = originalContent;
+                searchMatches = [];
+                currentMatchIndex = -1;
+                searchInfo.textContent = '';
+
+                // Reapply line numbers if enabled
+                if (lineNumbersEnabled) {
+                    const lines = content.textContent.split('\n');
+                    content.innerHTML = lines.map(line =>
+                        '<span class="line">' + escapeHtml(line) + '</span>'
+                    ).join('\n');
+                    content.classList.add('line-numbers');
+                }
                 return;
             }
 
+            const text = originalContent;
             const regex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-            const highlighted = text.replace(regex, match =>
-                '<span class="highlight-match">' + escapeHtml(match) + '</span>'
-            );
+
+            // Find all matches
+            searchMatches = [];
+            let match;
+            while ((match = regex.exec(text)) !== null) {
+                searchMatches.push({
+                    index: match.index,
+                    length: match[0].length,
+                    text: match[0]
+                });
+            }
+
+            if (resetIndex) {
+                currentMatchIndex = searchMatches.length > 0 ? 0 : -1;
+            }
+
+            // Highlight all matches
+            highlightMatches(text, query);
+
+            // Update search info
+            if (searchMatches.length > 0) {
+                searchInfo.textContent = `Match ${currentMatchIndex + 1} of ${searchMatches.length}`;
+            } else {
+                searchInfo.textContent = 'No matches found';
+            }
+        }
+
+        function highlightMatches(text, query) {
+            const content = document.getElementById('file-content');
+            const regex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+
+            let lastIndex = 0;
+            let highlighted = '';
+            let matchCount = 0;
+
+            let match;
+            regex.lastIndex = 0;
+            while ((match = regex.exec(text)) !== null) {
+                // Add text before match
+                highlighted += escapeHtml(text.substring(lastIndex, match.index));
+
+                // Add highlighted match
+                const className = matchCount === currentMatchIndex ? 'highlight-current' : 'highlight-match';
+                highlighted += '<span class="' + className + '">' + escapeHtml(match[0]) + '</span>';
+
+                lastIndex = match.index + match[0].length;
+                matchCount++;
+            }
+
+            // Add remaining text
+            highlighted += escapeHtml(text.substring(lastIndex));
+
             content.innerHTML = highlighted;
+
+            // Reapply line numbers if enabled
+            if (lineNumbersEnabled) {
+                const lines = content.innerHTML.split('\n');
+                content.innerHTML = lines.map(line =>
+                    '<span class="line">' + line + '</span>'
+                ).join('\n');
+                content.classList.add('line-numbers');
+            }
+
+            // Scroll to current match
+            if (currentMatchIndex >= 0) {
+                scrollToCurrentMatch();
+            }
+        }
+
+        function cycleToNextMatch() {
+            if (searchMatches.length === 0) return;
+
+            currentMatchIndex = (currentMatchIndex + 1) % searchMatches.length;
+
+            const searchInput = document.getElementById('search-input');
+            const searchInfo = document.getElementById('search-info');
+
+            // Re-highlight with new current match
+            highlightMatches(originalContent, searchInput.value);
+
+            // Update search info
+            searchInfo.textContent = `Match ${currentMatchIndex + 1} of ${searchMatches.length}`;
+        }
+
+        function scrollToCurrentMatch() {
+            const currentMatch = document.querySelector('.highlight-current');
+            if (currentMatch) {
+                currentMatch.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
         }
     </script>
 </body>
@@ -609,7 +746,7 @@ collect_config_files() {
     oc exec $pod -n $namespace -c redis -- cat /etc/redis/redis.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-redis.conf" 2>/dev/null || echo "No redis container or redis.conf in gateway $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 
-  # Controller-web pods - collect redis.conf, nginx.conf, supervisord.conf, tower_settings.py
+  # Controller-web pods - collect redis.conf, nginx.conf, supervisord.conf
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=automationcontroller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     # Check if this is a web pod (not task pod)
     if [[ "$pod" == *"web"* ]]; then
@@ -631,15 +768,10 @@ collect_config_files() {
 
       # Collect supervisord.conf
       oc exec $pod -n $namespace -c $web_container -- cat /etc/supervisord.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-web-supervisord.conf" 2>/dev/null || echo "Failed to collect supervisord.conf from controller web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-      # Collect tower_settings.py
-      oc exec $pod -n $namespace -c $web_container -- cat /etc/tower/settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-web-tower_settings.py" 2>/dev/null || \
-      oc exec $pod -n $namespace -c $web_container -- cat /etc/tower/tower_settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-web-tower_settings.py" 2>/dev/null || \
-      echo "Failed to collect tower_settings.py from controller web $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
     fi
   done
 
-  # Controller-task pods - collect receptor.conf, redis.conf, supervisord.conf, tower_settings.py
+  # Controller-task pods - collect receptor.conf, redis.conf, supervisord.conf
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=task -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     echo "Collecting config files from controller task pod: $pod"
 
@@ -659,33 +791,22 @@ collect_config_files() {
 
     # Collect supervisord.conf
     oc exec $pod -n $namespace -c $task_container -- cat /etc/supervisord.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-task-supervisord.conf" 2>/dev/null || echo "Failed to collect supervisord.conf from controller task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-    # Collect tower_settings.py
-    oc exec $pod -n $namespace -c $task_container -- cat /etc/tower/settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-task-tower_settings.py" 2>/dev/null || \
-    oc exec $pod -n $namespace -c $task_container -- cat /etc/tower/tower_settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-task-tower_settings.py" 2>/dev/null || \
-    echo "Failed to collect tower_settings.py from controller task $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 
-  # Hub API pods - collect nginx.conf, redis.conf, pulp settings
+  # Hub API pods - collect nginx.conf
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/name=automationhub-api -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     echo "Collecting config files from hub API pod: $pod"
 
     # Collect nginx.conf
     oc exec $pod -n $namespace -c api -- cat /etc/nginx/nginx.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-api-nginx.conf" 2>/dev/null || echo "Failed to collect nginx.conf from hub API $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-    # Collect pulp settings
-    oc exec $pod -n $namespace -c api -- cat /etc/pulp/settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-api-pulp_settings.py" 2>/dev/null || echo "Failed to collect pulp settings from hub API $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 
-  # EDA API pods - collect nginx.conf, redis.conf, eda settings
+  # EDA API pods - collect nginx.conf
   for pod in $(oc get pods -n $namespace -l app.kubernetes.io/component=eda-api -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
     echo "Collecting config files from EDA API pod: $pod"
 
     # Collect nginx.conf
     oc exec $pod -n $namespace -c nginx -- cat /etc/nginx/nginx.conf > "${BASE_COLLECTION_PATH}/configs/${pod}-api-nginx.conf" 2>/dev/null || echo "Failed to collect nginx.conf from EDA API $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-
-    # Collect EDA settings
-    oc exec $pod -n $namespace -c eda-api -- cat /etc/eda/settings.py > "${BASE_COLLECTION_PATH}/configs/${pod}-api-eda_settings.py" 2>/dev/null || echo "Failed to collect EDA settings from EDA API $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
   done
 
   # Redis standalone pods - collect redis.conf
@@ -905,48 +1026,7 @@ sanitize_settings() {
     fi
   done
 
-  # Sanitize Hub pulp_settings.py config files
-  for config_file in ${BASE_COLLECTION_PATH}/configs/*-api-pulp_settings.py; do
-    if [ -f "$config_file" ]; then
-      echo "Sanitizing Hub config: $(basename $config_file)"
 
-      temp_file="${config_file}.tmp"
-      cp "$config_file" "$temp_file"
-
-      # Sanitize Hub pulp_settings.py sensitive values
-      # PASSWORD in DATABASES dict (Python dict format)
-      sed -i 's/"PASSWORD": "[^"]*"/"PASSWORD": "*************"/g' "$temp_file" 2>/dev/null || true
-
-      # REDIS_PASSWORD
-      sed -i 's/REDIS_PASSWORD = "[^"]*"/REDIS_PASSWORD = "*************"/g' "$temp_file" 2>/dev/null || true
-      sed -i "s/REDIS_PASSWORD = '[^']*'/REDIS_PASSWORD = '*************'/g" "$temp_file" 2>/dev/null || true
-
-      # DB_ENCRYPTION_KEY (path is OK, but sanitize if it contains actual key)
-      sed -i 's/DB_ENCRYPTION_KEY = "[^/][^"]*"/DB_ENCRYPTION_KEY = "*************"/g' "$temp_file" 2>/dev/null || true
-
-      # RESOURCE_SERVER SECRET_KEY (in dict format)
-      sed -i 's/"SECRET_KEY": "[^"]*"/"SECRET_KEY": "*************"/g' "$temp_file" 2>/dev/null || true
-
-      # ANSIBLE_BASE_JWT_KEY
-      sed -i 's/ANSIBLE_BASE_JWT_KEY = "[^"]*"/ANSIBLE_BASE_JWT_KEY = "*************"/g' "$temp_file" 2>/dev/null || true
-      sed -i "s/ANSIBLE_BASE_JWT_KEY = '[^']*'/ANSIBLE_BASE_JWT_KEY = '*************'/g" "$temp_file" 2>/dev/null || true
-
-      # SECRET_KEY (Django - if present)
-      sed -i 's/SECRET_KEY = "[^"]*"/SECRET_KEY = "*************"/g' "$temp_file" 2>/dev/null || true
-      sed -i "s/SECRET_KEY = '[^']*'/SECRET_KEY = '*************'/g" "$temp_file" 2>/dev/null || true
-
-      # PRIVATE_KEY_PATH - sanitize actual key content if embedded (path is OK)
-      # This is typically a path, so we only sanitize if it's not a path
-      sed -i 's/PRIVATE_KEY_PATH = "[^/][^"]*"/PRIVATE_KEY_PATH = "*************"/g' "$temp_file" 2>/dev/null || true
-
-      # TOKEN_SIGNATURE_ALGORITHM - this is OK to keep (ES256, etc.)
-      # PUBLIC_KEY_PATH - path is OK to keep
-
-      # Move sanitized file back
-      mv "$temp_file" "$config_file"
-      echo "Sanitized: $(basename $config_file)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
-    fi
-  done
 
   # Sanitize Hub redis.conf files
   for config_file in ${BASE_COLLECTION_PATH}/configs/*hub-redis*.conf; do
@@ -1505,31 +1585,7 @@ EOF
       echo "            </ul>" >> $NAMESPACE_HTML
     fi
 
-    # AutomationController instances
-    if [ -d "$ns_dir/automationcontroller.ansible.com/automationcontrollers" ]; then
-      echo "            <h3>AutomationController</h3>" >> $NAMESPACE_HTML
-      echo "            <ul>" >> $NAMESPACE_HTML
-      for ac_file in $(find "$ns_dir/automationcontroller.ansible.com/automationcontrollers" -name "*.yaml" -type f | sort); do
-        filename=$(basename "$ac_file")
-        relative_path=$(echo "$ac_file" | sed "s|${BASE_COLLECTION_PATH}/||")
-        echo "                <li><a href=\"../$relative_path\">$filename</a></li>" >> $NAMESPACE_HTML
-        found_resources=true
-      done
-      echo "            </ul>" >> $NAMESPACE_HTML
-    fi
 
-    # AutomationHub instances
-    if [ -d "$ns_dir/automationhub.ansible.com/automationhubs" ]; then
-      echo "            <h3>AutomationHub</h3>" >> $NAMESPACE_HTML
-      echo "            <ul>" >> $NAMESPACE_HTML
-      for ah_file in $(find "$ns_dir/automationhub.ansible.com/automationhubs" -name "*.yaml" -type f | sort); do
-        filename=$(basename "$ah_file")
-        relative_path=$(echo "$ah_file" | sed "s|${BASE_COLLECTION_PATH}/||")
-        echo "                <li><a href=\"../$relative_path\">$filename</a></li>" >> $NAMESPACE_HTML
-        found_resources=true
-      done
-      echo "            </ul>" >> $NAMESPACE_HTML
-    fi
 
     # EDA instances
     if [ -d "$ns_dir/eda.ansible.com/edas" ]; then
@@ -2002,6 +2058,33 @@ EOF
 
     # Find config files related to this namespace
     found_configs=false
+
+    # AutomationController settings
+    if [ -d "$ns_dir/automationcontroller.ansible.com/automationcontrollers" ]; then
+      echo "            <h3>Automation Controller Settings</h3>" >> $NAMESPACE_HTML
+      echo "            <ul>" >> $NAMESPACE_HTML
+      for ac_file in $(find "$ns_dir/automationcontroller.ansible.com/automationcontrollers" -name "*.yaml" -type f | sort); do
+        filename=$(basename "$ac_file")
+        relative_path=$(echo "$ac_file" | sed "s|${BASE_COLLECTION_PATH}/||")
+        echo "                <li><a href=\"../$relative_path\">$filename</a></li>" >> $NAMESPACE_HTML
+        found_configs=true
+      done
+      echo "            </ul>" >> $NAMESPACE_HTML
+    fi
+
+    # AutomationHub settings
+    if [ -d "$ns_dir/automationhub.ansible.com/automationhubs" ]; then
+      echo "            <h3>Automation Hub Settings</h3>" >> $NAMESPACE_HTML
+      echo "            <ul>" >> $NAMESPACE_HTML
+      for ah_file in $(find "$ns_dir/automationhub.ansible.com/automationhubs" -name "*.yaml" -type f | sort); do
+        filename=$(basename "$ah_file")
+        relative_path=$(echo "$ah_file" | sed "s|${BASE_COLLECTION_PATH}/||")
+        echo "                <li><a href=\"../$relative_path\">$filename</a></li>" >> $NAMESPACE_HTML
+        found_configs=true
+      done
+      echo "            </ul>" >> $NAMESPACE_HTML
+    fi
+
     if [ -d "${BASE_COLLECTION_PATH}/configs" ] && [ -n "$namespace_pods" ]; then
 
       # Group configs by component type
@@ -2040,7 +2123,7 @@ EOF
       # Controller configs - filter by pods in this namespace
       controller_configs=""
       for pod in $namespace_pods; do
-        pod_controller_configs=$(find ${BASE_COLLECTION_PATH}/configs -maxdepth 1 \( -name "${pod}-*controller*.conf" -o -name "${pod}-*controller*.py" \) -type f 2>/dev/null)
+        pod_controller_configs=$(find ${BASE_COLLECTION_PATH}/configs -maxdepth 1 -name "${pod}-*controller*.conf" -type f 2>/dev/null)
         if [ -n "$pod_controller_configs" ]; then
           controller_configs="$controller_configs $pod_controller_configs"
         fi
@@ -2063,8 +2146,6 @@ EOF
             display_name="$(echo "$filename" | sed 's/-.*-redis.conf/ - Redis Configuration/')"
           elif [[ "$filename" == *"supervisord.conf"* ]]; then
             display_name="$(echo "$filename" | sed 's/-.*-supervisord.conf/ - Supervisord Configuration/')"
-          elif [[ "$filename" == *"tower_settings.py"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-.*-tower_settings.py/ - Tower Settings/')"
           fi
 
           echo "                <li><a href=\"../$relative_path.html\">$display_name</a></li>" >> $NAMESPACE_HTML
@@ -2076,7 +2157,7 @@ EOF
       # Hub configs - filter by pods in this namespace
       hub_configs=""
       for pod in $namespace_pods; do
-        pod_hub_configs=$(find ${BASE_COLLECTION_PATH}/configs -maxdepth 1 \( -name "${pod}-*hub*.conf" -o -name "${pod}-*hub*.py" \) -type f 2>/dev/null)
+        pod_hub_configs=$(find ${BASE_COLLECTION_PATH}/configs -maxdepth 1 -name "${pod}-*hub*.conf" -type f 2>/dev/null)
         if [ -n "$pod_hub_configs" ]; then
           hub_configs="$hub_configs $pod_hub_configs"
         fi
@@ -2093,8 +2174,6 @@ EOF
           display_name="$filename"
           if [[ "$filename" == *"nginx.conf"* ]]; then
             display_name="$(echo "$filename" | sed 's/-.*-nginx.conf/ - Nginx Configuration/')"
-          elif [[ "$filename" == *"pulp_settings.py"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-.*-pulp_settings.py/ - Pulp Settings/')"
           fi
 
           echo "                <li><a href=\"../$relative_path.html\">$display_name</a></li>" >> $NAMESPACE_HTML
@@ -2106,7 +2185,7 @@ EOF
       # EDA configs - filter by pods in this namespace
       eda_configs=""
       for pod in $namespace_pods; do
-        pod_eda_configs=$(find ${BASE_COLLECTION_PATH}/configs -maxdepth 1 \( -name "${pod}-*eda*.conf" -o -name "${pod}-*eda*.py" \) -type f 2>/dev/null)
+        pod_eda_configs=$(find ${BASE_COLLECTION_PATH}/configs -maxdepth 1 -name "${pod}-*eda*.conf" -type f 2>/dev/null)
         if [ -n "$pod_eda_configs" ]; then
           eda_configs="$eda_configs $pod_eda_configs"
         fi
@@ -2123,11 +2202,9 @@ EOF
           display_name="$filename"
           if [[ "$filename" == *"nginx.conf"* ]]; then
             display_name="$(echo "$filename" | sed 's/-api-nginx.conf/ - Nginx Configuration/')"
-          elif [[ "$filename" == *"eda_settings.py"* ]]; then
-            display_name="$(echo "$filename" | sed 's/-api-eda_settings.py/ - EDA Settings/')"
           fi
 
-          echo "                <li><a href=\"../$relative_path\">$display_name</a></li>" >> $NAMESPACE_HTML
+          echo "                <li><a href=\"../$relative_path.html\">$display_name</a></li>" >> $NAMESPACE_HTML
           found_configs=true
         done
         echo "            </ul>" >> $NAMESPACE_HTML
@@ -2323,14 +2400,13 @@ generate_index_html() {
             <a href="#operators">Operators</a>
             <a href="#namespaces">Namespaces</a>
             <a href="#resources">Cluster Resources</a>
-            <a href="#cluster">Namespace Resources</a>
         </div>
 
         <div class="section important" id="summary">
             <h2>📊 Summary Reports</h2>
             <p>Start here for a high-level overview of your AAP deployment:</p>
             <ul>
-                <li><a href="summary/summary-report.html"><strong>HTML Summary Report</strong></a> - Version info, error analysis, and key findings</li>
+                <li><a href="summary/summary-report.html"><strong>Summary Report</strong></a> - Version info, AAP details, and key findings</li>
             </ul>
         </div>
 
@@ -2457,21 +2533,6 @@ EOF
                 <li><a href="cluster/worker-dmesg.log.html">Worker Node Messages</a> - Kernel messages from worker nodes</li>
                 <li><a href="gather-aap.log.html">Gather Execution Log</a> - Must-gather collection log</li>
             </ul>
-        </div>
-
-        <div class="section" id="cluster">
-            <h2>📦 Namespace Resources</h2>
-            <p>Quick status views of namespace-scoped Kubernetes resources across all AAP namespaces:</p>
-            <ul>
-                <li><a href="resources/pvcs.log.html">PVC Status</a></li>
-                <li><a href="resources/deployments.log.html">Deployments</a></li>
-                <li><a href="resources/services.log.html">Services</a></li>
-                <li><a href="resources/routes.log.html">Routes</a></li>
-                <li><a href="resources/configmaps.log.html">ConfigMaps</a></li>
-                <li><a href="resources/secrets.log.html">Secrets</a></li>
-                <li><a href="resources/pods/">Pod Status by Namespace</a></li>
-            </ul>
-            <p><em>For namespace-specific resources, visit the individual <a href="#namespaces">Namespace Details</a> pages.</em></p>
         </div>
 
         <div class="section">
