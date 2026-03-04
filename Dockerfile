@@ -1,9 +1,9 @@
 # Copyright (c) 2021 Red Hat, Inc.
 # Copyright Contributors to the Ansible project
 
-FROM quay.io/openshift/origin-cli:4.7 as builder
+FROM quay.io/openshift/origin-cli:4.20 as builder
 
-FROM registry.access.redhat.com/ubi8/ubi-minimal:latest
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 RUN microdnf update -y \
     && microdnf install -y tar rsync findutils gzip iproute util-linux \
