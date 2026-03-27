@@ -6,6 +6,7 @@ mkdir -p ${BASE_COLLECTION_PATH}
 ANSIBLECRD="automationcontrollerbackups.automationcontroller.ansible.com \
   automationcontrollerrestores.automationcontroller.ansible.com \
   automationcontrollers.automationcontroller.ansible.com \
+  automationcontrollermeshingresses.automationcontroller.ansible.com \
   automationhubbackups.automationhub.ansible.com \
   automationhubrestores.automationhub.ansible.com \
   automationhubs.automationhub.ansible.com \
@@ -22,9 +23,13 @@ ANSIBLECRD="automationcontrollerbackups.automationcontroller.ansible.com \
   jobtemplates.tower.ansible.com \
   workflowtemplates.tower.ansible.com \
   ansiblelightspeeds.lightspeed.ansible.com \
+  ansiblemcpservers.mcpserver.ansible.com \
   ansibleautomationplatforms.aap.ansible.com \
   ansibleautomationplatformbackups.aap.ansible.com \
-  ansibleautomationplatformrestores.aap.ansible.com"
+  ansibleautomationplatformrestores.aap.ansible.com \
+  metricsservices.automationmetricsservice.ansible.com \
+  metricsservicebackups.automationmetricsservice.ansible.com \
+  metricsservicerestores.automationmetricsservice.ansible.com"
 
 oc adm inspect customresourcedefinition.apiextensions.k8s.io $ANSIBLECRD --dest-dir=must-gather
 oc adm inspect customresourcedefinition.apiextensions.k8s.io subscriptions.operators.coreos.com clusterserviceversions.operators.coreos.com --dest-dir=must-gather
