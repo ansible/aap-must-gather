@@ -44,7 +44,30 @@ NS=`echo ${ANSIBLENS[@]} | xargs -n1 | sort -u`
 for a in $NS; do
   oc adm inspect ns/"$a"  --dest-dir=must-gather
   oc adm inspect -n $a csv --dest-dir=must-gather
-  oc get pods -n $a >> ${BASE_COLLECTION_PATH}/gather-aap.log
+  echo "=== All resources in namespace $a ===" >> ${BASE_COLLECTION_PATH}/gather-aap.log
+  oc get all -n $a >> ${BASE_COLLECTION_PATH}/gather-aap.log
+  echo "=== ConfigMaps in namespace $a ===" >> ${BASE_COLLECTION_PATH}/gather-aap.log
+  oc get configmaps -n $a >> ${BASE_COLLECTION_PATH}/gather-aap.log
+  echo "=== PVCs in namespace $a ===" >> ${BASE_COLLECTION_PATH}/gather-aap.log
+  oc get pvc -n $a >> ${BASE_COLLECTION_PATH}/gather-aap.log
+  echo "=== Secrets in namespace $a ===" >> ${BASE_COLLECTION_PATH}/gather-aap.log
+  oc get secrets -n $a >> ${BASE_COLLECTION_PATH}/gather-aap.log
+
+  # Resource quotas and limits
+  oc get resourcequotas -n $a -o yaml > ${BASE_COLLECTION_PATH}/resourcequotas-$a.yaml
+  oc get limitranges -n $a -o yaml > ${BASE_COLLECTION_PATH}/limitranges-$a.yaml
+
+  # StorageClasses and VolumeSnapshots
+  oc get storageclasses -o yaml > ${BASE_COLLECTION_PATH}/storageclasses.yaml
+
+  # PV details and status
+  oc get pv -o yaml > ${BASE_COLLECTION_PATH}/persistentvolumes.yaml
+  oc describe pvc -n $a > ${BASE_COLLECTION_PATH}/pvc-descriptions-$a.log
+
+  # PV details and status
+  oc get pv -o yaml > ${BASE_COLLECTION_PATH}/persistentvolumes.yaml
+  oc describe pvc -n $a > ${BASE_COLLECTION_PATH}/pvc-descriptions-$a.log
+
 done
 
 for b in $(oc get -A subs --field-selector='metadata.name=ansible-automation-platform-operator' -o custom-columns=NAMESPACE:.metadata.namespace); do
