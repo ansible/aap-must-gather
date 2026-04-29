@@ -1,0 +1,190 @@
+#!/bin/bash
+#
+# gather-k8s: kubectl-based must-gather collection for non-OpenShift platforms.
+#
+# Collects the same diagnostic data as the OpenShift-based `gather` script
+# but uses kubectl instead of `oc adm inspect`. Output is written to the same
+# directory structure so that downstream Red Hat tooling remains compatible.
+#
+# Usage:
+#   BASE_COLLECTION_PATH=/must-gather bash gather-k8s
+#
+# Or standalone:
+#   BASE_COLLECTION_PATH=./output bash gather-k8s
+#
+
+set -uo pipefail
+
+BASE_COLLECTION_PATH="${BASE_COLLECTION_PATH:-/must-gather}"
+DEST_DIR="${BASE_COLLECTION_PATH}/must-gather"
+mkdir -p "${DEST_DIR}"
+
+ANSIBLECRD="automationcontrollerbackups.automationcontroller.ansible.com \
+  automationcontrollerrestores.automationcontroller.ansible.com \
+  automationcontrollers.automationcontroller.ansible.com \
+  automationcontrollermeshingresses.automationcontroller.ansible.com \
+  automationhubbackups.automationhub.ansible.com \
+  automationhubrestores.automationhub.ansible.com \
+  automationhubs.automationhub.ansible.com \
+  edas.eda.ansible.com \
+  edabackups.eda.ansible.com \
+  edarestores.eda.ansible.com \
+  ansiblecredentials.tower.ansible.com \
+  ansibleinstancegroups.tower.ansible.com \
+  ansibleinventories.tower.ansible.com \
+  ansibleprojects.tower.ansible.com \
+  ansibleschedules.tower.ansible.com \
+  ansiblejobs.tower.ansible.com \
+  ansibleworkflows.tower.ansible.com \
+  jobtemplates.tower.ansible.com \
+  workflowtemplates.tower.ansible.com \
+  ansiblelightspeeds.lightspeed.ansible.com \
+  ansiblemcpservers.mcpserver.ansible.com \
+  ansibleautomationplatforms.aap.ansible.com \
+  ansibleautomationplatformbackups.aap.ansible.com \
+  ansibleautomationplatformrestores.aap.ansible.com"
+
+echo "=== AAP Must-Gather (kubectl mode) ==="
+echo "Output: ${DEST_DIR}"
+echo ""
+
+# --- Collect CRD definitions ---
+echo "--- Collecting CRD definitions ---"
+CRD_DIR="${DEST_DIR}/cluster-scoped-resources/customresourcedefinitions"
+mkdir -p "${CRD_DIR}"
+
+for crd in $ANSIBLECRD; do
+  if kubectl get crd "$crd" >/dev/null 2>&1; then
+    kubectl get crd "$crd" -o yaml > "${CRD_DIR}/${crd}.yaml" 2>/dev/null
+    echo "  Collected CRD: ${crd}"
+  fi
+done
+
+# --- Discover AAP namespaces ---
+echo ""
+echo "--- Discovering AAP namespaces ---"
+ANSIBLENS=""
+for crd in $ANSIBLECRD; do
+  if kubectl get crd "$crd" >/dev/null 2>&1; then
+    NS_LIST=$(kubectl get "$crd" --all-namespaces --no-headers -o custom-columns=NAMESPACE:.metadata.namespace 2>/dev/null)
+    ANSIBLENS="${ANSIBLENS} ${NS_LIST}"
+  fi
+done
+
+NS=$(echo "${ANSIBLENS}" | xargs -n1 2>/dev/null | sort -u | grep -v '^$')
+
+if [ -z "$NS" ]; then
+  echo "WARNING: No AAP namespaces found. Ensure AAP CRDs are installed."
+  exit 0
+fi
+
+echo "  Found namespaces: ${NS}"
+
+# --- Collect per-namespace resources ---
+for ns in $NS; do
+  echo ""
+  echo "--- Collecting resources for namespace: ${ns} ---"
+  NS_DIR="${DEST_DIR}/namespaces/${ns}"
+  mkdir -p "${NS_DIR}/core"
+  mkdir -p "${NS_DIR}/apps"
+  mkdir -p "${NS_DIR}/networking.k8s.io"
+
+  # Core resources
+  kubectl get pods -n "$ns" -o yaml > "${NS_DIR}/core/pods.yaml" 2>/dev/null || true
+  kubectl get services -n "$ns" -o yaml > "${NS_DIR}/core/services.yaml" 2>/dev/null || true
+  kubectl get configmaps -n "$ns" -o yaml > "${NS_DIR}/core/configmaps.yaml" 2>/dev/null || true
+  kubectl get secrets -n "$ns" -o name > "${NS_DIR}/core/secrets_list.txt" 2>/dev/null || true
+  kubectl get persistentvolumeclaims -n "$ns" -o yaml > "${NS_DIR}/core/persistentvolumeclaims.yaml" 2>/dev/null || true
+  kubectl get endpoints -n "$ns" -o yaml > "${NS_DIR}/core/endpoints.yaml" 2>/dev/null || true
+  kubectl get serviceaccounts -n "$ns" -o yaml > "${NS_DIR}/core/serviceaccounts.yaml" 2>/dev/null || true
+
+  # Apps resources
+  kubectl get deployments -n "$ns" -o yaml > "${NS_DIR}/apps/deployments.yaml" 2>/dev/null || true
+  kubectl get statefulsets -n "$ns" -o yaml > "${NS_DIR}/apps/statefulsets.yaml" 2>/dev/null || true
+  kubectl get replicasets -n "$ns" -o yaml > "${NS_DIR}/apps/replicasets.yaml" 2>/dev/null || true
+
+  # Networking
+  kubectl get networkpolicies -n "$ns" -o yaml > "${NS_DIR}/networking.k8s.io/networkpolicies.yaml" 2>/dev/null || true
+  kubectl get ingresses -n "$ns" -o yaml > "${NS_DIR}/networking.k8s.io/ingresses.yaml" 2>/dev/null || true
+
+  # AAP custom resources
+  for crd in $ANSIBLECRD; do
+    CRD_GROUP=$(echo "$crd" | cut -d. -f2-)
+    CRD_RESOURCE=$(echo "$crd" | cut -d. -f1)
+    CRD_NS_DIR="${NS_DIR}/${CRD_GROUP}"
+    mkdir -p "${CRD_NS_DIR}"
+    kubectl get "$crd" -n "$ns" -o yaml > "${CRD_NS_DIR}/${CRD_RESOURCE}.yaml" 2>/dev/null || true
+  done
+
+  # OLM resources (skip gracefully if OLM is not installed)
+  if kubectl api-resources --api-group=operators.coreos.com >/dev/null 2>&1; then
+    OLM_DIR="${NS_DIR}/operators.coreos.com"
+    mkdir -p "${OLM_DIR}"
+    kubectl get clusterserviceversions -n "$ns" -o yaml > "${OLM_DIR}/clusterserviceversions.yaml" 2>/dev/null || true
+    kubectl get subscriptions.operators.coreos.com -n "$ns" -o yaml > "${OLM_DIR}/subscriptions.yaml" 2>/dev/null || true
+    kubectl get installplans -n "$ns" -o yaml > "${OLM_DIR}/installplans.yaml" 2>/dev/null || true
+  fi
+
+  # Events (sorted by timestamp)
+  EVENTS_DIR="${NS_DIR}/events"
+  mkdir -p "${EVENTS_DIR}"
+  kubectl get events -n "$ns" --sort-by=.lastTimestamp > "${EVENTS_DIR}/events_all.txt" 2>/dev/null || true
+  kubectl get events -n "$ns" --field-selector type=Warning --sort-by=.lastTimestamp > "${EVENTS_DIR}/events_warnings.txt" 2>/dev/null || true
+
+  # Pod logs (current + previous)
+  echo "  Collecting pod logs..."
+  PODS=$(kubectl get pods -n "$ns" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null)
+  for pod in $PODS; do
+    POD_DIR="${NS_DIR}/pods/${pod}"
+
+    CONTAINERS=$(kubectl get pod "$pod" -n "$ns" -o jsonpath='{.spec.containers[*].name}' 2>/dev/null)
+    for container in $CONTAINERS; do
+      LOG_DIR="${POD_DIR}/${container}/${container}/logs"
+      mkdir -p "${LOG_DIR}"
+      kubectl logs "$pod" -n "$ns" -c "$container" > "${LOG_DIR}/current.log" 2>/dev/null || true
+      kubectl logs "$pod" -n "$ns" -c "$container" --previous > "${LOG_DIR}/previous.log" 2>/dev/null || true
+    done
+
+    INIT_CONTAINERS=$(kubectl get pod "$pod" -n "$ns" -o jsonpath='{.spec.initContainers[*].name}' 2>/dev/null)
+    for container in $INIT_CONTAINERS; do
+      LOG_DIR="${POD_DIR}/${container}/${container}/logs"
+      mkdir -p "${LOG_DIR}"
+      kubectl logs "$pod" -n "$ns" -c "$container" > "${LOG_DIR}/current.log" 2>/dev/null || true
+      kubectl logs "$pod" -n "$ns" -c "$container" --previous > "${LOG_DIR}/previous.log" 2>/dev/null || true
+    done
+  done
+
+  # Namespace descriptor
+  kubectl get namespace "$ns" -o yaml > "${NS_DIR}/${ns}.yaml" 2>/dev/null || true
+
+  echo "  Done: ${ns}"
+done
+
+# --- Collect cluster-level information ---
+echo ""
+echo "--- Collecting cluster information ---"
+CLUSTER_DIR="${DEST_DIR}/cluster-scoped-resources"
+mkdir -p "${CLUSTER_DIR}"
+
+kubectl get nodes -o yaml > "${CLUSTER_DIR}/nodes.yaml" 2>/dev/null || true
+kubectl version -o yaml > "${CLUSTER_DIR}/version.yaml" 2>/dev/null || true
+
+# --- Gather log ---
+kubectl get pods --all-namespaces --selector='app.kubernetes.io/managed-by=automationcontroller-operator' \
+  >> "${BASE_COLLECTION_PATH}/gather-aap.log" 2>/dev/null || true
+kubectl get pods --all-namespaces --selector='app.kubernetes.io/managed-by=automationhub-operator' \
+  >> "${BASE_COLLECTION_PATH}/gather-aap.log" 2>/dev/null || true
+kubectl get pods --all-namespaces --selector='app.kubernetes.io/managed-by=eda-operator' \
+  >> "${BASE_COLLECTION_PATH}/gather-aap.log" 2>/dev/null || true
+
+# --- Run redaction if available ---
+if command -v python3 &>/dev/null && [ -f "$(dirname "$0")/redact" ]; then
+  echo ""
+  echo "--- Running post-collection redaction ---"
+  python3 "$(dirname "$0")/redact" "${DEST_DIR}"
+fi
+
+echo ""
+echo "=== Must-gather collection complete ==="
+echo "Output directory: ${DEST_DIR}"
+echo "Files collected: $(find "${DEST_DIR}" -type f | wc -l)"
