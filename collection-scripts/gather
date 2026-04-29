@@ -45,6 +45,29 @@ for a in $NS; do
   oc adm inspect ns/"$a"  --dest-dir=must-gather
   oc adm inspect -n $a csv --dest-dir=must-gather
   oc get pods -n $a >> ${BASE_COLLECTION_PATH}/gather-aap.log
+
+  # Collect events sorted by timestamp
+  EVENTS_DIR="${BASE_COLLECTION_PATH}/namespaces/${a}/events"
+  mkdir -p "${EVENTS_DIR}"
+  oc get events -n "$a" --sort-by=.lastTimestamp > "${EVENTS_DIR}/events_all.txt" 2>/dev/null || true
+  oc get events -n "$a" --field-selector type=Warning --sort-by=.lastTimestamp > "${EVENTS_DIR}/events_warnings.txt" 2>/dev/null || true
+
+  # Collect previous container logs for restarted pods
+  PREV_LOG_PATH="${BASE_COLLECTION_PATH}/namespaces/${a}/previous-logs"
+  mkdir -p "${PREV_LOG_PATH}"
+  PODS=$(oc get pods -n "$a" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null)
+  for pod in $PODS; do
+    CONTAINERS=$(oc get pod "$pod" -n "$a" -o jsonpath='{.spec.containers[*].name}' 2>/dev/null)
+    for container in $CONTAINERS; do
+      oc logs "$pod" -n "$a" -c "$container" --previous \
+        > "${PREV_LOG_PATH}/${pod}_${container}_previous.log" 2>/dev/null || true
+    done
+    INIT_CONTAINERS=$(oc get pod "$pod" -n "$a" -o jsonpath='{.spec.initContainers[*].name}' 2>/dev/null)
+    for container in $INIT_CONTAINERS; do
+      oc logs "$pod" -n "$a" -c "$container" --previous \
+        > "${PREV_LOG_PATH}/${pod}_init_${container}_previous.log" 2>/dev/null || true
+    done
+  done
 done
 
 for b in $(oc get -A subs --field-selector='metadata.name=ansible-automation-platform-operator' -o custom-columns=NAMESPACE:.metadata.namespace); do
