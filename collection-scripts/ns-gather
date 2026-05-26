@@ -29,7 +29,8 @@ ANSIBLECRD="automationcontrollerbackups.automationcontroller.ansible.com \
   ansibleautomationplatformrestores.aap.ansible.com \
   metricsservices.automationmetricsservice.ansible.com \
   metricsservicebackups.automationmetricsservice.ansible.com \
-  metricsservicerestores.automationmetricsservice.ansible.com"
+  metricsservicerestores.automationmetricsservice.ansible.com \
+  automationorchestrators.aap.ansible.com"
 
 oc adm inspect customresourcedefinition.apiextensions.k8s.io $ANSIBLECRD --dest-dir=must-gather
 oc adm inspect customresourcedefinition.apiextensions.k8s.io subscriptions.operators.coreos.com clusterserviceversions.operators.coreos.com --dest-dir=must-gather
