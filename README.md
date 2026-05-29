@@ -1,10 +1,10 @@
 # AAP Must Gather
 
-This is a must gather operator for Ansible Automation Platform.
+This is a must-gather plugin for Ansible Automation Platform, used with `oc adm must-gather`.
 
 ## Purpose
 
-The purpose of this operator is to gather debugging 
+The purpose of this plugin is to gather debugging 
 
 ## Usage
 
