@@ -724,6 +724,46 @@ collect_operator_logs() {
   done
 }
 
+# Function to collect logs from ALL containers of ALL pods in a namespace
+collect_all_container_logs() {
+  local namespace=$1
+  echo "Collecting all container logs for namespace: $namespace"
+
+  for pod in $(oc get pods -n $namespace -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+    # Skip operator pods — collect_operator_logs handles those with its own naming
+    if [[ "$pod" == *"operator-controller-manager"* ]]; then
+      continue
+    fi
+
+    # Collect current logs from all regular containers
+    containers=$(oc get pod $pod -n $namespace -o jsonpath='{.spec.containers[*].name}' 2>/dev/null)
+    for container in $containers; do
+      local outfile="${BASE_COLLECTION_PATH}/logs/${pod}-${container}.log"
+      if [ ! -f "$outfile" ]; then
+        oc logs $pod -n $namespace -c $container > "$outfile" 2>/dev/null || \
+          echo "Failed to collect logs for container $container in pod $pod" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
+      fi
+
+      # Previous logs (useful for crash investigation)
+      local prev_outfile="${BASE_COLLECTION_PATH}/logs/${pod}-${container}-previous.log"
+      if [ ! -f "$prev_outfile" ]; then
+        oc logs $pod -n $namespace -c $container --previous > "$prev_outfile" 2>/dev/null || \
+          rm -f "$prev_outfile"
+      fi
+    done
+
+    # Previous logs for init containers
+    init_containers=$(oc get pod $pod -n $namespace -o jsonpath='{.spec.initContainers[*].name}' 2>/dev/null)
+    for init_container in $init_containers; do
+      local prev_init="${BASE_COLLECTION_PATH}/logs/${pod}-${init_container}-init-previous.log"
+      if [ ! -f "$prev_init" ]; then
+        oc logs $pod -n $namespace -c $init_container --previous > "$prev_init" 2>/dev/null || \
+          rm -f "$prev_init"
+      fi
+    done
+  done
+}
+
 # Function to collect configuration files from key containers
 collect_config_files() {
   local namespace=$1
@@ -1127,6 +1167,7 @@ if [ ! -z "$NS" ]; then
     collect_init_container_logs $a || echo "Failed to collect init container logs for $a"
     collect_migration_job_logs $a || echo "Failed to collect migration job logs for $a"
     collect_operator_logs $a || echo "Failed to collect operator logs for $a"
+    collect_all_container_logs $a || echo "Failed to collect container logs for $a"
     collect_config_files $a || echo "Failed to collect config files for $a"
     collect_management_commands $a || echo "Failed to collect management commands for $a"
   done
