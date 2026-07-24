@@ -668,10 +668,13 @@ sanitize_settings() {
       # OPA_AUTH_TOKEN
       sed -i "s/\(OPA_AUTH_TOKEN[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
+      # AUTH_LDAP_BIND_PASSWORD
+      sed -i "s/\(AUTH_LDAP_BIND_PASSWORD[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
       # SECRET_KEY in dict values (e.g. RESOURCE_SERVER dict)
       sed -i "s/\('SECRET_KEY':[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
-      # Redis URL passwords (redis://user:password@host)
+      # Credential URL passwords (redis://user:password@host, postgresql://, etc.)
       sed -i "s|://[^:]*:[^@]*@|://****:****@|g" "$temp_file" 2>/dev/null || true
 
       # Move sanitized file back
@@ -753,7 +756,7 @@ sanitize_settings() {
       sed -i 's/^masterauth .*/masterauth *************/' "$temp_file" 2>/dev/null || true
 
       # ACL user passwords (>password format)
-      sed -i 's/>[^ ]*/>*************/' "$temp_file" 2>/dev/null || true
+      sed -i 's/>[^ ]*/>*************/g' "$temp_file" 2>/dev/null || true
 
       # Move sanitized file back
       mv "$temp_file" "$config_file"
@@ -793,7 +796,7 @@ sanitize_settings() {
       # SECRET_KEY in dict values (e.g. RESOURCE_SERVER dict)
       sed -i "s/\('SECRET_KEY':[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
-      # Redis URL passwords (redis://user:password@host)
+      # Credential URL passwords (redis://user:password@host, postgresql://, etc.)
       sed -i "s|://[^:]*:[^@]*@|://****:****@|g" "$temp_file" 2>/dev/null || true
 
       # Move sanitized file back
@@ -851,7 +854,7 @@ sanitize_settings() {
       sed -i "s/\(REDHAT_PASSWORD[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
       # Inline password= in conninfo/DSN strings (e.g. DISPATCHERD dicts)
-      sed -i "s/password=[^[:space:]']*/password=*************'/g" "$temp_file" 2>/dev/null || true
+      sed -i "s/password=[^[:space:]']*/password=*************/g" "$temp_file" 2>/dev/null || true
 
       # Move sanitized file back
       mv "$temp_file" "$settings_file"
@@ -1119,7 +1122,7 @@ create_namespace_structure() {
         filename=$(basename "$log_file")
         # Extract pod name (format: podname-containername-suffix.log)
         # Check if this log belongs to this namespace by checking if pod exists in must-gather
-        pod_prefix=$(echo "$filename" | sed 's/-operator.*//' | sed 's/-init.*//' | sed 's/-previous.*//')
+        pod_prefix=$(echo "$filename" | sed 's/\.log$//' | sed 's/-operator.*//' | sed 's/-init.*//' | sed 's/-previous.*//')
 
         if [ -d "$MUST_GATHER_NS_PATH/pods/$pod_prefix"* ] 2>/dev/null; then
           # Find the actual pod directory

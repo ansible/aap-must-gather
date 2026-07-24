@@ -217,7 +217,8 @@ convert_to_html() {
         <pre id="file-content" class="SYNTAX_CLASS">
 EOF_HTML_HEADER
 
-  sed -i "s/FILE_TITLE/$title/g" "$output_file"
+  local escaped_title=$(printf '%s\n' "$title" | sed 's/[&/\]/\\&/g')
+  sed -i "s/FILE_TITLE/$escaped_title/g" "$output_file"
   sed -i "s/SYNTAX_CLASS/$syntax_class/g" "$output_file"
 
   if [ -f "$input_file" ]; then
@@ -400,7 +401,8 @@ EOF_HTML_HEADER
 </html>
 EOF_HTML_FOOTER
 
-  sed -i "s/FILE_TITLE/$title/g" "$output_file"
+  local escaped_title=$(printf '%s\n' "$title" | sed 's/[&/\]/\\&/g')
+  sed -i "s/FILE_TITLE/$escaped_title/g" "$output_file"
 }
 
 # ============================================================================

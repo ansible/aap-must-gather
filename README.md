@@ -44,16 +44,17 @@ open test-output/index.html
 
 ```
 must-gather.local.*/
-├── index.html                    # Interactive navigation interface
-├── reports/
-│   ├── summary-report.html       # Error analysis and version info
-│   └── error-summary.log         # Detailed error findings
-├── logs/                         # InitContainer and pod logs
-├── commands/                     # ShowMigrations and other command outputs
-├── pvc-status.log               # Storage information
-├── deployments.log              # Deployment status
-├── services.log                 # Service configurations
-└── [standard must-gather files] # OpenShift cluster data
+├── summary/                      # Summary info, events, node status
+├── operators/                    # CSV, subscriptions, install plans
+├── cluster/                      # Cluster version, dmesg logs
+├── namespaces/<ns>/              # Per-namespace logs, configs, commands
+├── logs/                         # Container logs (current and previous)
+├── commands/                     # Management command outputs (sanitized)
+├── configs/                      # Config files (redis.conf, nginx.conf, etc.)
+├── resources/                    # Deployments, services, PVCs, routes
+├── must-gather/                  # OMC-compatible standard must-gather tree
+├── reports/                      # Summary report (with --render-webpage)
+└── index.html                    # HTML viewer (with --render-webpage)
 ```
 
 ## OMC Compatibility
@@ -68,12 +69,6 @@ omc use must-gather.local.*/
 omc get automationcontroller -A
 omc get pods -n <aap-namespace> -o wide
 ```
-
-For detailed information about OMC compatibility and AAP-specific features, see [docs/omc-compatibility.md](docs/omc-compatibility.md).
-
-## Documentation
-
-- **[docs/omc-compatibility.md](docs/omc-compatibility.md)** - OMC compatibility and additional features
 
 ## Troubleshooting
 
