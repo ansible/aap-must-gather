@@ -627,7 +627,7 @@ sanitize_settings() {
       sed -i "s/\(RADIUS_SECRET[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
       # SECRET_KEY
-      sed -i "s/\(SECRET_KEY[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+      sed -i "s/\(SECRET_KEY[[:space:]]*=[[:space:]]*\)b\{0,1\}['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
       # SOCIAL_AUTH_AZUREAD_OAUTH2_SECRET
       sed -i "s/\(SOCIAL_AUTH_AZUREAD_OAUTH2_SECRET[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
@@ -656,6 +656,24 @@ sanitize_settings() {
       # TACACSPLUS_SECRET
       sed -i "s/\(TACACSPLUS_SECRET[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
+      # ANSIBLE_BASE_JWT_KEY
+      sed -i "s/\(ANSIBLE_BASE_JWT_KEY[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # REDHAT_PASSWORD
+      sed -i "s/\(REDHAT_PASSWORD[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # SUBSCRIPTIONS_CLIENT_SECRET
+      sed -i "s/\(SUBSCRIPTIONS_CLIENT_SECRET[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # OPA_AUTH_TOKEN
+      sed -i "s/\(OPA_AUTH_TOKEN[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # SECRET_KEY in dict values (e.g. RESOURCE_SERVER dict)
+      sed -i "s/\('SECRET_KEY':[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # Redis URL passwords (redis://user:password@host)
+      sed -i "s|://[^:]*:[^@]*@|://****:****@|g" "$temp_file" 2>/dev/null || true
+
       # Move sanitized file back
       mv "$temp_file" "$settings_file"
       echo "Sanitized: $(basename $settings_file)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
@@ -677,7 +695,7 @@ sanitize_settings() {
       sed -i "s/\('PASSWORD':[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
       # SECRET_KEY (Django)
-      sed -i "s/\(SECRET_KEY[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+      sed -i "s/\(SECRET_KEY[[:space:]]*=[[:space:]]*\)b\{0,1\}['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
       sed -i "s/\('SECRET_KEY':[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
       # REDIS_PASSWORD
@@ -689,18 +707,40 @@ sanitize_settings() {
       # ANSIBLE_BASE_JWT_KEY
       sed -i "s/\(ANSIBLE_BASE_JWT_KEY[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
+      # AUTH_LDAP_BIND_PASSWORD
+      sed -i "s/\(AUTH_LDAP_BIND_PASSWORD[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # GALAXY_METRICS_COLLECTION_REDHAT_PASSWORD
+      sed -i "s/\(GALAXY_METRICS_COLLECTION_REDHAT_PASSWORD[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # KAFKA_SASL_PASSWORD
+      sed -i "s/\(KAFKA_SASL_PASSWORD[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # SOCIAL_AUTH_GITHUB_SECRET
+      sed -i "s/\(SOCIAL_AUTH_GITHUB_SECRET[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # SOCIAL_AUTH_KEYCLOAK_SECRET
+      sed -i "s/\(SOCIAL_AUTH_KEYCLOAK_SECRET[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # VAULT_PASSWORD_FOR_DYNACONF
+      sed -i "s/\(VAULT_PASSWORD_FOR_DYNACONF[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # VAULT_ROOT_TOKEN_FOR_DYNACONF
+      sed -i "s/\(VAULT_ROOT_TOKEN_FOR_DYNACONF[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # VAULT_SECRET_ID_FOR_DYNACONF
+      sed -i "s/\(VAULT_SECRET_ID_FOR_DYNACONF[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
       # Move sanitized file back
       mv "$temp_file" "$settings_file"
       echo "Sanitized: $(basename $settings_file)" >> "${BASE_COLLECTION_PATH}/gather-aap.log"
     fi
   done
 
-
-
-  # Sanitize Hub redis.conf files
-  for config_file in ${BASE_COLLECTION_PATH}/configs/*hub-redis*.conf; do
+  # Sanitize all redis.conf files
+  for config_file in ${BASE_COLLECTION_PATH}/configs/*redis*.conf; do
     if [ -f "$config_file" ]; then
-      echo "Sanitizing Hub Redis config: $(basename $config_file)"
+      echo "Sanitizing Redis config: $(basename $config_file)"
 
       temp_file="${config_file}.tmp"
       cp "$config_file" "$temp_file"
@@ -733,13 +773,28 @@ sanitize_settings() {
       # Format: SETTING_NAME = 'value'
 
       # SECRET_KEY
-      sed -i "s/\(SECRET_KEY[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+      sed -i "s/\(SECRET_KEY[[:space:]]*=[[:space:]]*\)b\{0,1\}['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
       # EMAIL_HOST_PASSWORD
       sed -i "s/\(EMAIL_HOST_PASSWORD[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
       # PASSWORD in DATABASES dict (format: 'PASSWORD': 'value')
       sed -i "s/\('PASSWORD':[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # ANSIBLE_BASE_JWT_KEY
+      sed -i "s/\(ANSIBLE_BASE_JWT_KEY[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # REDIS_PASSWORD
+      sed -i "s/\(REDIS_PASSWORD[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # DB_ENCRYPTION_KEY
+      sed -i "s/\(DB_ENCRYPTION_KEY[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # SECRET_KEY in dict values (e.g. RESOURCE_SERVER dict)
+      sed -i "s/\('SECRET_KEY':[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # Redis URL passwords (redis://user:password@host)
+      sed -i "s|://[^:]*:[^@]*@|://****:****@|g" "$temp_file" 2>/dev/null || true
 
       # Move sanitized file back
       mv "$temp_file" "$settings_file"
@@ -771,13 +826,32 @@ sanitize_settings() {
       sed -i "s/\('PASSWORD':[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
       # SECRET_KEY (both standalone and in dict format)
-      sed -i "s/\(SECRET_KEY[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+      sed -i "s/\(SECRET_KEY[[:space:]]*=[[:space:]]*\)b\{0,1\}['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
       sed -i "s/\('SECRET_KEY':[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # ANSIBLE_BASE_JWT_KEY
+      sed -i "s/\(ANSIBLE_BASE_JWT_KEY[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
       # CONTROLLER_TOKEN
       sed -i "s/\(CONTROLLER_TOKEN[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
 
-      # Note: DATABASES and RQ_QUEUES are complex dicts - PASSWORD within them is sanitized above
+      # EDA_CONTROLLER_TOKEN
+      sed -i "s/\(EDA_CONTROLLER_TOKEN[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # DB_PASSWORD
+      sed -i "s/\(DB_PASSWORD[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # EVENT_PERSISTENCE_DB_PASSWORD
+      sed -i "s/\(EVENT_PERSISTENCE_DB_PASSWORD[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # EVENT_STREAM_DB_PASSWORD
+      sed -i "s/\(EVENT_STREAM_DB_PASSWORD[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # REDHAT_PASSWORD
+      sed -i "s/\(REDHAT_PASSWORD[[:space:]]*=[[:space:]]*\)['\"][^'\"]*['\"]/\1'*************'/g" "$temp_file" 2>/dev/null || true
+
+      # Inline password= in conninfo/DSN strings (e.g. DISPATCHERD dicts)
+      sed -i "s/password=[^[:space:]']*/password=*************'/g" "$temp_file" 2>/dev/null || true
 
       # Move sanitized file back
       mv "$temp_file" "$settings_file"
