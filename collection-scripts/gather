@@ -29,33 +29,12 @@ fi
 BASE_COLLECTION_PATH="/must-gather"
 mkdir -p ${BASE_COLLECTION_PATH}
 
-AAP_CRD="automationcontrollerbackups.automationcontroller.ansible.com \
-  automationcontrollerrestores.automationcontroller.ansible.com \
-  automationcontrollers.automationcontroller.ansible.com \
-  automationcontrollermeshingresses.automationcontroller.ansible.com \
-  automationhubbackups.automationhub.ansible.com \
-  automationhubrestores.automationhub.ansible.com \
-  automationhubs.automationhub.ansible.com \
-  edas.eda.ansible.com \
-  edabackups.eda.ansible.com \
-  edarestores.eda.ansible.com \
-  ansiblecredentials.tower.ansible.com \
-  ansibleinstancegroups.tower.ansible.com \
-  ansibleinventories.tower.ansible.com \
-  ansibleprojects.tower.ansible.com \
-  ansibleschedules.tower.ansible.com \
-  ansiblejobs.tower.ansible.com \
-  ansibleworkflows.tower.ansible.com \
-  jobtemplates.tower.ansible.com \
-  workflowtemplates.tower.ansible.com \
-  ansiblelightspeeds.lightspeed.ansible.com \
-  ansiblemcpservers.mcpserver.ansible.com \
-  ansibleautomationplatforms.aap.ansible.com \
-  ansibleautomationplatformbackups.aap.ansible.com \
-  ansibleautomationplatformrestores.aap.ansible.com \
-  metricsservices.automationmetricsservice.ansible.com \
-  metricsservicebackups.automationmetricsservice.ansible.com \
-  metricsservicerestores.automationmetricsservice.ansible.com"
+CRD_LIST_FILE="$(dirname "$0")/crd-list.txt"
+if [ ! -f "${CRD_LIST_FILE}" ]; then
+  echo "ERROR: CRD list file not found: ${CRD_LIST_FILE}"
+  exit 1
+fi
+AAP_CRD=$(tr '\n' ' ' < "${CRD_LIST_FILE}")
 
 AO_CRD="automationorchestrators.aap.ansible.com"
 
@@ -78,6 +57,41 @@ fi
 oc adm inspect customresourcedefinition.apiextensions.k8s.io $CRDS_TO_COLLECT --dest-dir=must-gather
 oc adm inspect customresourcedefinition.apiextensions.k8s.io subscriptions.operators.coreos.com clusterserviceversions.operators.coreos.com --dest-dir=must-gather
 
+# collect_events <namespace>
+collect_events() {
+  local ns="$1"
+  EVENTS_DIR="${BASE_COLLECTION_PATH}/namespaces/${ns}/events"
+  mkdir -p "${EVENTS_DIR}"
+  oc get events -n "$ns" --sort-by=.lastTimestamp > "${EVENTS_DIR}/events_all.txt" 2>/dev/null || true
+  oc get events -n "$ns" --field-selector type=Warning --sort-by=.lastTimestamp > "${EVENTS_DIR}/events_warnings.txt" 2>/dev/null || true
+}
+
+# collect_previous_logs <namespace>
+collect_previous_logs() {
+  local ns="$1"
+  PREV_LOG_PATH="${BASE_COLLECTION_PATH}/namespaces/${ns}/previous-logs"
+  mkdir -p "${PREV_LOG_PATH}"
+  PODS=$(oc get pods -n "$ns" --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null)
+  for pod in $PODS; do
+    CONTAINERS=$(oc get pod "$pod" -n "$ns" -o jsonpath='{.spec.containers[*].name}' 2>/dev/null)
+    for container in $CONTAINERS; do
+      oc logs "$pod" -n "$ns" -c "$container" --previous \
+        > "${PREV_LOG_PATH}/${pod}_${container}_previous.log" 2>/dev/null || \
+        rm -f "${PREV_LOG_PATH}/${pod}_${container}_previous.log"
+      [ -s "${PREV_LOG_PATH}/${pod}_${container}_previous.log" ] || \
+        rm -f "${PREV_LOG_PATH}/${pod}_${container}_previous.log"
+    done
+    INIT_CONTAINERS=$(oc get pod "$pod" -n "$ns" -o jsonpath='{.spec.initContainers[*].name}' 2>/dev/null)
+    for container in $INIT_CONTAINERS; do
+      oc logs "$pod" -n "$ns" -c "$container" --previous \
+        > "${PREV_LOG_PATH}/${pod}_init_${container}_previous.log" 2>/dev/null || \
+        rm -f "${PREV_LOG_PATH}/${pod}_init_${container}_previous.log"
+      [ -s "${PREV_LOG_PATH}/${pod}_init_${container}_previous.log" ] || \
+        rm -f "${PREV_LOG_PATH}/${pod}_init_${container}_previous.log"
+    done
+  done
+}
+
 if [[ -n "$NAMESPACE" ]]; then
   for i in $CRDS_TO_COLLECT; do
     oc adm inspect $i -n $NAMESPACE --dest-dir=must-gather
@@ -85,6 +99,8 @@ if [[ -n "$NAMESPACE" ]]; then
 
   oc adm inspect ns/"$NAMESPACE"  --dest-dir=must-gather
   oc get pods -n $NAMESPACE >> ${BASE_COLLECTION_PATH}/gather-aap.log
+  collect_events "$NAMESPACE"
+  collect_previous_logs "$NAMESPACE"
 else
   for i in $CRDS_TO_COLLECT; do
      oc adm inspect $i --all-namespaces --dest-dir=must-gather
@@ -97,6 +113,8 @@ else
     oc adm inspect ns/"$a"  --dest-dir=must-gather
     oc adm inspect -n $a csv --dest-dir=must-gather
     oc get pods -n $a >> ${BASE_COLLECTION_PATH}/gather-aap.log
+    collect_events "$a"
+    collect_previous_logs "$a"
   done
 
   for b in $(oc get -A subs --field-selector='metadata.name=ansible-automation-platform-operator' -o custom-columns=NAMESPACE:.metadata.namespace); do
