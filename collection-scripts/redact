@@ -1,0 +1,501 @@
+#!/usr/bin/env python3
+"""
+Post-collection redaction script for aap-must-gather.
+
+Walks the must-gather output directory and redacts sensitive data
+(certificates, passwords, IPs, internal domains) while preserving
+the directory structure and maintaining consistent placeholder mappings.
+
+Usage:
+  redact <must-gather-directory>
+  redact --redact-only <must-gather-directory>
+"""
+
+import argparse
+import re
+import sys
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+
+@dataclass
+class RedactionResult:
+    """Result of a redaction operation."""
+    content: str
+    modified: bool = False
+    redaction_count: int = 0
+
+    def merge(self, other: 'RedactionResult') -> 'RedactionResult':
+        """Merge another result, carrying forward the latest content."""
+        return RedactionResult(
+            content=other.content,
+            modified=self.modified or other.modified,
+            redaction_count=self.redaction_count + other.redaction_count,
+        )
+
+
+class Redactor(ABC):
+    """Base class for all redactors."""
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        pass
+
+    @abstractmethod
+    def redact(self, content: str) -> RedactionResult:
+        pass
+
+
+class CertificateRedactor(Redactor):
+    """Redacts PEM certificate and private key bodies while preserving BEGIN/END markers."""
+
+    PEM_PATTERN = re.compile(
+        r'-----BEGIN (?:RSA |EC |DSA |OPENSSH )?(?:PRIVATE KEY|CERTIFICATE)-----'
+        r'.*?'
+        r'-----END (?:RSA |EC |DSA |OPENSSH )?(?:PRIVATE KEY|CERTIFICATE)-----',
+        re.DOTALL,
+    )
+
+    @property
+    def name(self) -> str:
+        return "Certificates/Keys"
+
+    def redact(self, content: str) -> RedactionResult:
+        if not content:
+            return RedactionResult(content=content or "")
+
+        def _replace_pem(m):
+            header = m.group(0).split('\n', 1)[0]
+            trailer = m.group(0).rsplit('\n', 1)[-1]
+            return f"{header}\n[REDACTED]\n{trailer}"
+
+        redacted, count = self.PEM_PATTERN.subn(_replace_pem, content)
+        return RedactionResult(content=redacted, modified=count > 0, redaction_count=count)
+
+
+class PasswordRedactor(Redactor):
+    """Redacts passwords, secrets, tokens, and API keys."""
+
+    SENSITIVE_KEYS = [
+        'DJANGO_SUPERUSER_PASSWORD',
+        'PASSWORD',
+        'SECRET',
+        'SECRET_KEY',
+        'API_KEY',
+        'TOKEN',
+        'ENCRYPTION_KEY',
+        'JWT_KEY',
+        'DSN',
+    ]
+
+    # Keys that can appear with arbitrary prefixes (e.g. GITHUB_TOKEN, DB_PASSWORD)
+    _PREFIXED_KEYS = frozenset((
+        'PASSWORD', 'SECRET', 'SECRET_KEY', 'API_KEY', 'TOKEN',
+        'ENCRYPTION_KEY', 'JWT_KEY', 'DSN',
+    ))
+
+    def __init__(self):
+        self._patterns = self._build_patterns()
+
+    @property
+    def name(self) -> str:
+        return "Passwords/Secrets"
+
+    def _build_patterns(self) -> List[Tuple[re.Pattern, str]]:
+        patterns: List[Tuple[str, str]] = []
+
+        for key in self.SENSITIVE_KEYS:
+            if key in self._PREFIXED_KEYS:
+                # Env var style with optional prefix: SOME_PASSWORD=value
+                patterns.append((
+                    rf'([A-Z_]*{key}=)([^\s"\',\]]+)',
+                    r'\1[REDACTED]'
+                ))
+                patterns.append((
+                    rf'([A-Z_]*{key}=)["\']([^"\']+)["\']',
+                    r'\1"[REDACTED]"'
+                ))
+            else:
+                patterns.append((
+                    rf'({key}=)([^\s"\',\]]+)',
+                    r'\1[REDACTED]'
+                ))
+                patterns.append((
+                    rf'({key}=)["\']([^"\']+)["\']',
+                    r'\1"[REDACTED]"'
+                ))
+
+            # JSON: {"KEY": "value"}
+            patterns.append((
+                rf'(\\?"{key}\\?"\s*:\s*\\?")([^"\\]|\\.)+(\\?")',
+                r'\1[REDACTED]\3'
+            ))
+            # YAML single-quoted: 'KEY': 'value'
+            patterns.append((
+                rf"('{key}'\s*:\s*')([^']+)(')",
+                r'\1[REDACTED]\3'
+            ))
+            # YAML bare: KEY: value
+            patterns.append((
+                rf'({key}:\s+)([^\s\n]+)',
+                r'\1[REDACTED]'
+            ))
+
+        # JSON settings list: "setting": "...SECRET...", "value": "<secret>"
+        sensitive_name_pattern = r'(?:SECRET|PASSWORD|TOKEN|API_KEY)'
+        patterns.append((
+            rf'("setting"\s*:\s*"(?:[^"]*?(?:{sensitive_name_pattern})[^"]*)"\s*,\s*"value"\s*:\s*")([^"\\]|\\.)+(")',
+            r'\1[REDACTED]\3'
+        ))
+        # Escaped JSON variant (annotations)
+        patterns.append((
+            rf'(\\"setting\\"\s*:\s*\\"(?:[^\\"]*?(?:{sensitive_name_pattern})[^\\"]*)\\"\s*,\s*\\"value\\"\s*:\s*\\")(?:[^\\"]|\\.)+(\\")',
+            r'\1[REDACTED]\2'
+        ))
+
+        # JSON name/value and key/value pairs
+        for identifier in ('name', 'key'):
+            patterns.append((
+                rf'("{identifier}"\s*:\s*"(?:[^"]*?(?:{sensitive_name_pattern})[^"]*)"\s*,\s*"value"\s*:\s*")([^"\\]|\\.)+(")',
+                r'\1[REDACTED]\3'
+            ))
+            patterns.append((
+                rf'(\\"{identifier}\\"\s*:\s*\\"(?:[^\\"]*?(?:{sensitive_name_pattern})[^\\"]*)\\"\s*,\s*\\"value\\"\s*:\s*\\")(?:[^\\"]|\\.)+(\\")',
+                r'\1[REDACTED]\2'
+            ))
+
+        # Kubernetes YAML env var format (multi-line):
+        #   - name: SOME_TOKEN
+        #     value: secret-here
+        patterns.append((
+            rf'([-\s]*(?:name|key):\s+(?:[^\n]*?(?:{sensitive_name_pattern})[^\n]*)\s+value:\s+)([^\s\n]+)',
+            r'\1[REDACTED]'
+        ))
+
+        # Connection strings: postgres://user:password@host, mysql://user:pass@host
+        patterns.append((
+            r'((?:postgres|postgresql|mysql|amqp|redis)://[^:]+:)([^@]+)(@)',
+            r'\1[REDACTED]\3'
+        ))
+
+        # High-entropy tokens: 128+ character alphanumeric strings without hyphens
+        # (not sha256 digests, not Kubernetes resource names which use hyphens)
+        patterns.append((
+            r'(?<![\w:])([A-Za-z0-9_/+=]{128,})(?![\w:])',
+            r'[REDACTED_TOKEN]'
+        ))
+
+        return [(re.compile(p), r) for p, r in patterns]
+
+    def redact(self, content: str) -> RedactionResult:
+        if not content:
+            return RedactionResult(content=content or "")
+
+        redacted = content
+        total = 0
+
+        for pattern, replacement in self._patterns:
+            redacted, count = pattern.subn(replacement, redacted)
+            total += count
+
+        return RedactionResult(content=redacted, modified=total > 0, redaction_count=total)
+
+
+class IPRedactor(Redactor):
+    """Redacts RFC 1918 IP addresses with consistent placeholders."""
+
+    def __init__(self):
+        self._internal_map: Dict[str, str] = {}
+        self._k8s_map: Dict[str, str] = {}
+
+    @property
+    def name(self) -> str:
+        return "IP Addresses"
+
+    def _get_internal_placeholder(self, ip: str) -> str:
+        if ip not in self._internal_map:
+            self._internal_map[ip] = f"10.REDACTED.{len(self._internal_map) + 1}.X"
+        return self._internal_map[ip]
+
+    def _get_k8s_placeholder(self, ip: str) -> str:
+        if ip not in self._k8s_map:
+            self._k8s_map[ip] = f"172.REDACTED.{len(self._k8s_map) + 1}.X"
+        return self._k8s_map[ip]
+
+    def redact(self, content: str) -> RedactionResult:
+        if not content:
+            return RedactionResult(content=content or "")
+
+        redacted = content
+
+        # 10.x.x.x with optional CIDR
+        def replace_internal(m):
+            return self._get_internal_placeholder(m.group(1)) + (m.group(2) or '')
+
+        redacted = re.sub(
+            r'\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3})(/\d{1,2})?\b',
+            replace_internal,
+            redacted
+        )
+
+        # 172.16-31.x.x with optional CIDR
+        def replace_k8s(m):
+            return self._get_k8s_placeholder(m.group(1)) + (m.group(2) or '')
+
+        redacted = re.sub(
+            r'\b(172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})(/\d{1,2})?\b',
+            replace_k8s,
+            redacted
+        )
+
+        # 192.168.x.x with optional CIDR
+        def replace_192(m):
+            return self._get_internal_placeholder(m.group(1)) + (m.group(2) or '')
+
+        redacted = re.sub(
+            r'\b(192\.168\.\d{1,3}\.\d{1,3})(/\d{1,2})?\b',
+            replace_192,
+            redacted
+        )
+
+        return RedactionResult(
+            content=redacted,
+            modified=redacted != content,
+            redaction_count=sum(1 for _ in re.finditer(r'REDACTED', redacted)) if redacted != content else 0
+        )
+
+
+class DomainRedactor(Redactor):
+    """Redacts internal domain names and proxy configurations."""
+
+    DOMAIN_PATTERNS = [
+        r'\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+internal\b',
+        r'\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+local\b',
+        r'\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+corp\b',
+        r'\b([a-zA-Z0-9][-a-zA-Z0-9]*\.)+private\b',
+    ]
+
+    # Patterns that should be excluded from redaction (K8s service DNS)
+    EXCLUDE_PATTERNS = [
+        re.compile(r'\.svc\.cluster\.local$', re.IGNORECASE),
+    ]
+
+    PROXY_PATTERNS = [
+        (r'(https?_proxy=)https?://[^\s"\']+', r'\1http://REDACTED_PROXY'),
+        (r'(HTTPS?_PROXY=)https?://[^\s"\']+', r'\1http://REDACTED_PROXY'),
+        (r'(no_proxy=)[^\s"\']+', r'\1REDACTED_NO_PROXY'),
+        (r'(NO_PROXY=)[^\s"\']+', r'\1REDACTED_NO_PROXY'),
+        (r'(proxy:\s+)https?://[^\s"\']+', r'\1http://REDACTED_PROXY'),
+    ]
+
+    def __init__(self):
+        self._domain_map: Dict[str, str] = {}
+
+    @property
+    def name(self) -> str:
+        return "Domains/Proxies"
+
+    def _get_domain_placeholder(self, domain: str) -> str:
+        if domain not in self._domain_map:
+            self._domain_map[domain] = f"redacted-domain-{len(self._domain_map) + 1}.example.com"
+        return self._domain_map[domain]
+
+    def redact(self, content: str) -> RedactionResult:
+        if not content:
+            return RedactionResult(content=content or "")
+
+        redacted = content
+        proxy_count = 0
+
+        def _replace_domain(m):
+            domain = m.group(0)
+            if any(p.search(domain) for p in self.EXCLUDE_PATTERNS):
+                return domain
+            return self._get_domain_placeholder(domain)
+
+        for pattern in self.DOMAIN_PATTERNS:
+            redacted = re.sub(
+                pattern,
+                _replace_domain,
+                redacted,
+                flags=re.IGNORECASE
+            )
+
+        for pattern, replacement in self.PROXY_PATTERNS:
+            redacted, count = re.subn(pattern, replacement, redacted, flags=re.IGNORECASE)
+            proxy_count += count
+
+        return RedactionResult(
+            content=redacted,
+            modified=redacted != content,
+            redaction_count=len(self._domain_map) + proxy_count if redacted != content else 0
+        )
+
+
+class ConfigMapRedactor(Redactor):
+    """Redacts certificates within CA-related ConfigMaps."""
+
+    REDACT_PATTERNS = [
+        r'.*-ca$',
+        r'.*-root-cert',
+        r'.*-tls-cert',
+        r'kube-root-ca\.crt',
+    ]
+
+    def __init__(self):
+        self._cert_redactor = CertificateRedactor()
+
+    @property
+    def name(self) -> str:
+        return "ConfigMap Certificates"
+
+    def redact(self, content: str) -> RedactionResult:
+        if not content:
+            return RedactionResult(content=content or "")
+
+        try:
+            import yaml
+        except ImportError:
+            print('WARNING: PyYAML not available, falling back to generic cert redaction',
+                  file=sys.stderr)
+            return self._cert_redactor.redact(content)
+
+        # Check if this looks like a CA-related ConfigMap by inspecting names
+        # without doing a full parse/serialize round-trip (preserves comments/formatting)
+        try:
+            docs = list(yaml.safe_load_all(content))
+        except Exception:
+            return RedactionResult(content=content)
+
+        should_redact = False
+        for doc in docs:
+            if not doc or not isinstance(doc, dict) or doc.get('kind') != 'ConfigMap':
+                continue
+            cm_name = doc.get('metadata', {}).get('name', '')
+            if any(re.match(p, cm_name) for p in self.REDACT_PATTERNS):
+                should_redact = True
+                break
+
+        if not should_redact:
+            return RedactionResult(content=content)
+
+        # Apply certificate redaction directly to the raw text (preserves comments/formatting)
+        return self._cert_redactor.redact(content)
+
+
+class RedactorChain:
+    """Applies multiple redactors in sequence."""
+
+    def __init__(self, redactors: List[Redactor]):
+        self.redactors = redactors
+
+    def redact(self, content: str) -> RedactionResult:
+        result = RedactionResult(content=content)
+        for redactor in self.redactors:
+            current = redactor.redact(result.content)
+            result = result.merge(current)
+        return result
+
+
+def get_default_redactors() -> List[Redactor]:
+    return [
+        ConfigMapRedactor(),
+        CertificateRedactor(),
+        PasswordRedactor(),
+        DomainRedactor(),
+        IPRedactor(),
+    ]
+
+
+def process_directory(directory: Path, verbose: bool = True) -> int:
+    """Process all files in directory with redaction chain."""
+    chain = RedactorChain(get_default_redactors())
+    modified_total = 0
+
+    all_files = [f for f in directory.rglob('*') if f.is_file() and not f.is_symlink()]
+    print(f"Processing {len(all_files)} file(s) in {directory}...")
+
+    for filepath in all_files:
+        try:
+            content = filepath.read_text(encoding='utf-8', errors='strict')
+        except UnicodeDecodeError:
+            if verbose:
+                print(f"  SKIP (binary): {filepath.relative_to(directory)}")
+            continue
+        except Exception as e:
+            if verbose:
+                print(f"  SKIP (read error): {filepath.relative_to(directory)}: {e}")
+            continue
+
+        result = chain.redact(content)
+
+        if result.modified:
+            try:
+                import tempfile
+                import os
+                tmp_fd, tmp_path = tempfile.mkstemp(
+                    dir=str(filepath.parent),
+                    prefix=f'.{filepath.name}.',
+                    suffix='.tmp',
+                )
+                closed = False
+                try:
+                    os.write(tmp_fd, result.content.encode('utf-8'))
+                    os.close(tmp_fd)
+                    closed = True
+                    os.rename(tmp_path, str(filepath))
+                except BaseException:
+                    if not closed:
+                        os.close(tmp_fd)
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+                    raise
+            except Exception as e:
+                if verbose:
+                    print(f"  ERROR (write): {filepath.relative_to(directory)}: {e}")
+                continue
+            modified_total += 1
+            if verbose:
+                print(f"  REDACTED ({result.redaction_count} items): "
+                      f"{filepath.relative_to(directory)}")
+
+    return modified_total
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Redact sensitive data from must-gather output"
+    )
+    parser.add_argument(
+        'directory',
+        type=Path,
+        help="Path to must-gather output directory"
+    )
+    parser.add_argument(
+        '--redact-only',
+        action='store_true',
+        default=False,
+        help="Run redaction on an existing must-gather directory without re-collecting"
+    )
+    parser.add_argument(
+        '-q', '--quiet',
+        action='store_true',
+        help="Suppress per-file output"
+    )
+
+    args = parser.parse_args()
+
+    if not args.directory.exists() or not args.directory.is_dir():
+        print(f"Error: '{args.directory}' is not a valid directory", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"=== Running post-collection redaction on: {args.directory} ===")
+    modified = process_directory(args.directory, verbose=not args.quiet)
+    print(f"\n=== Redaction complete: {modified} file(s) modified ===")
+
+
+if __name__ == '__main__':
+    main()
